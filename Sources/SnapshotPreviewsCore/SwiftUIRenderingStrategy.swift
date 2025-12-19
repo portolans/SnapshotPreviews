@@ -6,7 +6,11 @@
 //
 
 import Foundation
+import CoreGraphics
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, visionOS 1.0, *)
 public class SwiftUIRenderingStrategy: RenderingStrategy {
@@ -29,6 +33,14 @@ public class SwiftUIRenderingStrategy: RenderingStrategy {
     }
     let wrappedView = EmergeModifierView(wrapped: view)
     let renderer = ImageRenderer(content: wrappedView)
+    #if canImport(UIKit)
+    let defaultScale = UIScreen.main.scale
+    #elseif canImport(AppKit)
+    let defaultScale = NSScreen.main?.backingScaleFactor ?? 1.0
+    #else
+    let defaultScale: CGFloat = 1.0
+    #endif
+    renderer.scale = SnapshotRenderScale.value(defaultScale: defaultScale)
     #if canImport(UIKit)
     let image = renderer.uiImage
     #else

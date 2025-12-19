@@ -120,7 +120,9 @@ extension View {
     maxSize: Double = 1_000_000) -> Result<UIImage, RenderingError>
   {
     if renderingMode == EmergeRenderingMode.window {
-      let renderer = UIGraphicsImageRenderer(size: window.bounds.size)
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
+      let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
       let screenshot = renderer.image { _ in
           window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
@@ -158,7 +160,9 @@ extension View {
     if targetSize.height > maxSize || targetSize.width > maxSize {
       return .failure(RenderingError.maxSize(targetSize))
     }
-    let renderer = UIGraphicsImageRenderer(size: targetSize)
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
+    let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
     let image = renderer.image { context in
       drawCode(context.cgContext)
     }
