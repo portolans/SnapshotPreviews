@@ -55,11 +55,11 @@ public struct Preview: Identifiable {
       #if canImport(UIKit) && !os(watchOS)
       if let source = source as? MakeUIViewProvider {
         _view = {
-          return UIViewWrapper(source.makeView)
+          return UIViewWrapper(source.makeView).ignoresSafeArea()
         }
       } else if let source = source as? MakeViewControllerProvider {
         _view = {
-          return UIViewControllerWrapper(source.makeViewController)
+          return UIViewControllerWrapper(source.makeViewController).ignoresSafeArea()
         }
       } else {
         print("Preview \(preview) (\(displayName ?? "no display name")) did not have matching source type")
