@@ -58,7 +58,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #endif
   }
     #endif
-  private static var renderingStrategy: RenderingStrategy? = nil
+  /// Cached rendering strategy per concrete subclass. Two `SnapshotTest`
+  /// subclasses in the same bundle each return their own `setupA11y()`,
+  /// so the cache must key by class — otherwise whichever class runs first
+  /// wins the cache and the other class silently reuses its strategy.
+  private static var renderingStrategies: [ObjectIdentifier: RenderingStrategy] = [:]
 
   static private var previews: [SnapshotPreviewsCore.PreviewType] = []
   
@@ -97,15 +101,16 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     let preview = previewType.previews[discoveredPreview.index]
     var result: SnapshotResult? = nil
     let strategy: RenderingStrategy
-    if let renderingStrategy = Self.renderingStrategy {
-      strategy = renderingStrategy
+    let strategyKey = ObjectIdentifier(Self.self)
+    if let cached = Self.renderingStrategies[strategyKey] {
+      strategy = cached
     } else {
 #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
       strategy = Self.makeRenderingStrategy(a11y: Self.setupA11y())
       #else
       strategy = Self.makeRenderingStrategy()
       #endif
-      Self.renderingStrategy = strategy
+      Self.renderingStrategies[strategyKey] = strategy
     }
     let expectation = XCTestExpectation()
     strategy.render(preview: preview) { snapshotResult in
