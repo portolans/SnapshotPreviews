@@ -58,10 +58,8 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #endif
   }
     #endif
-  /// Cached rendering strategy per concrete subclass. Two `SnapshotTest`
-  /// subclasses in the same bundle each return their own `setupA11y()`,
-  /// so the cache must key by class — otherwise whichever class runs first
-  /// wins the cache and the other class silently reuses its strategy.
+  /// Cached rendering strategy per concrete subclass. Two `SnapshotTest` subclasses in the same bundle each return their own `setupA11y()`,
+  /// so the cache must key by class — otherwise whichever class runs first wins the cache and the other class silently reuses its strategy.
   private static var renderingStrategies: [ObjectIdentifier: RenderingStrategy] = [:]
 
   static private var previews: [SnapshotPreviewsCore.PreviewType] = []
