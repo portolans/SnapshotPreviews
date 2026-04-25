@@ -69,10 +69,8 @@ extension View {
         }
       } else {
         DispatchQueue.main.async {
-          // When a class-level a11yWrapper is provided we treat it as opt-in for
-          // every preview unless that preview explicitly disabled accessibility.
-          // This lets test bundles run a single a11y-overlaying SnapshotTest
-          // subclass over their full preview set without per-#Preview annotations.
+          // When a class-level a11yWrapper is provided we treat it as opt-in for every preview unless that preview explicitly disabled accessibility.
+          // This lets test bundles run a single a11y-overlaying SnapshotTest subclass over their full preview set without per-#Preview annotations.
           if let a11yWrapper, accessibilityEnabled != false {
             let a11yView = a11yWrapper(controller, window, layout)
             let result = Self.takeSnapshot(layout: .sizeThatFits, renderingMode: renderingMode, window: window, rootVC: containerVC, targetView: a11yView)
