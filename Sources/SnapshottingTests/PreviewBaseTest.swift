@@ -28,6 +28,35 @@ open class PreviewBaseTest: XCTestCase {
 
   static var signatureCreator: NSObject?
 
+  open override class var defaultTestSuite: XCTestSuite {
+    // EMGInvocationCreator's +load tries to install our testInvocations
+    // swizzle, but its `[NSClassFromString("EMGPreviewBaseTest")
+    // performSelector:@selector(swizzle:)]` call is a silent no-op when this
+    // Swift class isn't yet registered with the Obj-C runtime — a load-order
+    // race between the Obj-C and Swift halves of the package. When the race
+    // is lost, signatureCreator stays nil, every PreviewBaseTest subclass
+    // falls through to XCTestCase's default testInvocations (which finds no
+    // static test* methods on these dynamic classes), and the bundle exits
+    // cleanly having run zero previews. Force the swizzle here, where this
+    // class is guaranteed to be realized (defaultTestSuite is being called
+    // on it). Idempotent — the swizzle's class_addMethod returns false if
+    // the method is already installed.
+    ensureSwizzleInstalled()
+    return super.defaultTestSuite
+  }
+
+  private static func ensureSwizzleInstalled() {
+    guard signatureCreator == nil,
+          let creator = NSClassFromString("EMGInvocationCreator")
+    else {
+      return
+    }
+    // AnyClass instances are NSObject-compatible at the Obj-C level —
+    // swizzle(_:) only reads its argument as a class. Bridging via
+    // `as AnyObject as! NSObject` keeps this in safe Swift territory.
+    swizzle(creator as AnyObject as! NSObject)
+  }
+
   @objc
   static func swizzle(_ signatureCreator: NSObject) {
     self.signatureCreator = signatureCreator
