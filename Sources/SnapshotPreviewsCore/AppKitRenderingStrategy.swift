@@ -117,6 +117,15 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
   var previousHeight: CGFloat?
   var pendingContentSizeRetries: Int = 0
   var lastObservedContentHeight: CGFloat?
+  var pendingIntrinsicSizeRetries: Int = 0
+  var lastObservedIntrinsicSize: CGSize?
+
+  var hostFittingSize: CGSize? {
+    // NSView's `fittingSize` is the AppKit equivalent of UIKit's
+    // systemLayoutSizeFitting(compressedSize) and honors active layout
+    // constraints — same role in the settle loop.
+    view.fittingSize
+  }
 
   func setNeedsAnotherLayoutPass() {
     view.needsLayout = true
@@ -153,6 +162,8 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
     previousHeight = nil
     pendingContentSizeRetries = 0
     lastObservedContentHeight = nil
+    pendingIntrinsicSizeRetries = 0
+    lastObservedIntrinsicSize = nil
   }
 
   public func setupView(layout: PreviewLayout) {

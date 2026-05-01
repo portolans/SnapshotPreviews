@@ -39,6 +39,20 @@ protocol ScrollExpansionProviding: AnyObject, FirstScrollViewProviding {
   // Last contentSize observation. Used to detect stabilization: we only
   // commit when two consecutive passes report the same height.
   var lastObservedContentHeight: CGFloat? { get set }
+  // Tracks how many times we've deferred completion waiting for the host's
+  // intrinsic-content-size / fitting size to stabilize on the non-scroll
+  // path. Same iOS 18 hosting-controller pass-reordering issue as the scroll
+  // counter, but for views that don't have an inner UIScrollView (e.g. a
+  // hosting controller wrapping a fixed-layout SwiftUI view).
+  var pendingIntrinsicSizeRetries: Int { get set }
+  // Last intrinsic-size observation. Used to detect stabilization: we only
+  // commit when two consecutive passes report the same fitting size.
+  var lastObservedIntrinsicSize: CGSize? { get set }
+  // The host's currently-resolved fitting size. Implementations return
+  // `view.systemLayoutSizeFitting(...)` (UIKit) or
+  // `view.fittingSize` (AppKit). Returning nil signals "no useful intrinsic
+  // size to wait on" — settle loop falls through to immediate completion.
+  var hostFittingSize: CGSize? { get }
   // Asks the host to schedule another layout pass. UIKit hosts implement
   // this as view.setNeedsLayout(); AppKit / unsupported platforms can no-op.
   func setNeedsAnotherLayoutPass()
@@ -47,10 +61,14 @@ protocol ScrollExpansionProviding: AnyObject, FirstScrollViewProviding {
 extension ScrollExpansionProviding {
   func setNeedsAnotherLayoutPass() {}
 
+  var hostFittingSize: CGSize? { nil }
+
   func updateHeight(_ complete: (() -> Void)) {
     // Cap on contentSize-not-stabilized retries before we give up and complete
     // anyway. Prevents an infinite wait on a genuinely empty / animating view.
     let maxPendingContentSizeRetries = 10
+    // Symmetric cap for the intrinsic-size settle loop.
+    let maxPendingIntrinsicSizeRetries = 10
     // If heightAnchor isn't set, this was a fixed size and we don't expand the scroll view
     guard let heightAnchor else {
       complete()
@@ -95,6 +113,27 @@ extension ScrollExpansionProviding {
         complete()
       }
     } else {
+      // Non-scroll path. UIHostingController's two-pass layout can also drop
+      // intrinsic content size into the host view *after* the first
+      // viewDidLayoutSubviews — same race as the scroll-view path, but
+      // observed via systemLayoutSizeFitting / fittingSize instead of
+      // contentSize. Wait until two consecutive passes report the same
+      // fitting size before committing.
+      guard let fittingSize = hostFittingSize,
+            fittingSize.width > 0 || fittingSize.height > 0 else {
+        // Either the host doesn't expose a fitting size, or it returned
+        // (noIntrinsicMetric, noIntrinsicMetric)-equivalent zeros — there's
+        // nothing meaningful to wait on, complete immediately.
+        complete()
+        return
+      }
+      guard lastObservedIntrinsicSize == fittingSize
+              || pendingIntrinsicSizeRetries >= maxPendingIntrinsicSizeRetries else {
+        lastObservedIntrinsicSize = fittingSize
+        pendingIntrinsicSizeRetries += 1
+        setNeedsAnotherLayoutPass()
+        return
+      }
       complete()
     }
   }
