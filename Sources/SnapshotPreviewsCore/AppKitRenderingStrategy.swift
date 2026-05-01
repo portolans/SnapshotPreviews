@@ -118,13 +118,8 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
   var pendingContentSizeRetries: Int = 0
 
   func setNeedsAnotherLayoutPass() {
-    // AppKit's updateViewConstraints isn't re-triggered by needsLayout flags
-    // alone, so explicitly re-invoke our entry point on the next runloop tick.
-    // Without this, the contentSize-not-laid-out retry path in updateHeight
-    // would never re-enter and the snapshot pipeline would hang.
-    DispatchQueue.main.async { [weak self] in
-      self?.updateScrollViewHeight()
-    }
+    view.needsLayout = true
+    updateScrollViewHeight()
   }
 
   public var rendered: ((EmergeRenderingMode?, Float?, Bool?, Bool?) -> Void)? {
