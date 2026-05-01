@@ -107,6 +107,11 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
   private func runCallback(_ error: Error? = nil) {
     guard !didCall else { return }
 
+    let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
+    NSLog("[snapshot-debug] event=runCallback id=%lx error=%@ fitting=%@",
+          objectID,
+          error?.localizedDescription ?? "nil",
+          NSStringFromCGSize(hostFittingSize ?? .zero))
     didCall = true
     expansionSettled?(rootView.emergeRenderingMode, rootView.precision, rootView.accessibilityEnabled, rootView.appStoreSnapshot, error)
     stopAndResetTimer()
@@ -126,6 +131,10 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
   public override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     if didAppear {
+      let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
+      NSLog("[snapshot-debug] event=viewDidLayoutSubviews id=%lx didAppear=%d fitting=%@",
+            objectID, didAppear ? 1 : 0,
+            NSStringFromCGSize(hostFittingSize ?? .zero))
       updateScrollViewHeight()
     }
   }
@@ -133,6 +142,13 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
   public override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     didAppear = true
+    let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
+    NSLog("[snapshot-debug] event=viewDidAppear id=%lx fitting=%@",
+          objectID, NSStringFromCGSize(hostFittingSize ?? .zero))
+    NSLog("[snapshot-debug] event=vc-info id=%lx parent=%@ rootViewType=%@",
+          objectID,
+          parent?.description ?? "nil",
+          String(describing: type(of: rootView)))
     // Kick off the first settle attempt now that any viewDidAppear-driven
     // state mutations have had their chance to fire. The retry-on-instability
     // loop takes over from here via setNeedsLayout → next viewDidLayoutSubviews.

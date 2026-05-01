@@ -20,6 +20,13 @@ protocol ContentHeightProviding {
   var visibleContentHeight: CGFloat { get }
 }
 
+// Cross-platform CGSize formatter for [snapshot-debug] log lines. UIKit's
+// NSStringFromCGSize isn't available on all targets compiled by this file,
+// so we format manually for consistency.
+private func snapshotDebugString(_ size: CGSize) -> String {
+  "{\(size.width), \(size.height)}"
+}
+
 protocol FirstScrollViewProviding {
   var firstScrollView: ContentHeightProviding? { get }
 }
@@ -69,8 +76,10 @@ extension ScrollExpansionProviding {
     let maxPendingContentSizeRetries = 10
     // Symmetric cap for the intrinsic-size settle loop.
     let maxPendingIntrinsicSizeRetries = 10
+    let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
     // If heightAnchor isn't set, this was a fixed size and we don't expand the scroll view
     guard let heightAnchor else {
+      NSLog("[snapshot-debug] event=settle-complete path=none id=%lx reason=no-heightAnchor", objectID)
       complete()
       return
     }
@@ -85,6 +94,9 @@ extension ScrollExpansionProviding {
       // Without this, we capture at intermediate layout states and produce
       // run-to-run dimension drift on iOS 18 / Apple Silicon.
       let currentContentHeight = scrollView.contentHeight
+      NSLog("[snapshot-debug] event=settle path=scroll id=%lx pass=%d contentHeight=%g lastObserved=%@",
+            objectID, pendingContentSizeRetries, currentContentHeight,
+            lastObservedContentHeight.map { String(describing: $0) } ?? "nil")
       guard previousHeight != nil
               || (currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight)
               || pendingContentSizeRetries >= maxPendingContentSizeRetries else {
@@ -100,6 +112,9 @@ extension ScrollExpansionProviding {
             // Check if expansion isn't working and we should give up.
             // Could happen if the view is constrained to not grow, such as a half sheet
             guard abs(previousHeight - scrollView.visibleContentHeight) >= 1 else {
+              NSLog("[snapshot-debug] event=settle-complete path=scroll id=%lx pass=%d contentHeight=%g reason=no-expansion retriesCapped=%d",
+                    objectID, pendingContentSizeRetries, currentContentHeight,
+                    pendingContentSizeRetries >= maxPendingContentSizeRetries ? 1 : 0)
               complete()
               return
             }
@@ -107,9 +122,15 @@ extension ScrollExpansionProviding {
           previousHeight = scrollView.visibleContentHeight
           heightAnchor.constant += CGFloat(diff)
         } else {
+          NSLog("[snapshot-debug] event=settle-complete path=scroll id=%lx pass=%d contentHeight=%g reason=negative-diff retriesCapped=%d",
+                objectID, pendingContentSizeRetries, currentContentHeight,
+                pendingContentSizeRetries >= maxPendingContentSizeRetries ? 1 : 0)
           complete()
         }
       } else {
+        NSLog("[snapshot-debug] event=settle-complete path=scroll id=%lx pass=%d contentHeight=%g reason=zero-diff retriesCapped=%d",
+              objectID, pendingContentSizeRetries, currentContentHeight,
+              pendingContentSizeRetries >= maxPendingContentSizeRetries ? 1 : 0)
         complete()
       }
     } else {
@@ -124,9 +145,14 @@ extension ScrollExpansionProviding {
         // Either the host doesn't expose a fitting size, or it returned
         // (noIntrinsicMetric, noIntrinsicMetric)-equivalent zeros — there's
         // nothing meaningful to wait on, complete immediately.
+        NSLog("[snapshot-debug] event=settle-complete path=intrinsic id=%lx reason=no-fitting-size",
+              objectID)
         complete()
         return
       }
+      NSLog("[snapshot-debug] event=settle path=intrinsic id=%lx pass=%d fitting=%@ lastObserved=%@",
+            objectID, pendingIntrinsicSizeRetries, snapshotDebugString(fittingSize),
+            lastObservedIntrinsicSize.map { snapshotDebugString($0) } ?? "nil")
       guard lastObservedIntrinsicSize == fittingSize
               || pendingIntrinsicSizeRetries >= maxPendingIntrinsicSizeRetries else {
         lastObservedIntrinsicSize = fittingSize
@@ -134,6 +160,10 @@ extension ScrollExpansionProviding {
         setNeedsAnotherLayoutPass()
         return
       }
+      NSLog("[snapshot-debug] event=settle-complete path=intrinsic id=%lx pass=%d fitting=%@ retriesCapped=%d",
+            objectID, pendingIntrinsicSizeRetries,
+            snapshotDebugString(fittingSize),
+            pendingIntrinsicSizeRetries >= maxPendingIntrinsicSizeRetries ? 1 : 0)
       complete()
     }
   }

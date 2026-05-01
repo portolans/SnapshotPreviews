@@ -140,6 +140,12 @@ extension View {
       let format = UIGraphicsImageRendererFormat()
       format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
       let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
+      let rootVCAddr = UInt(bitPattern: ObjectIdentifier(rootVC).hashValue)
+      let targetViewAddr = UInt(bitPattern: ObjectIdentifier(targetView).hashValue)
+      NSLog("[snapshot-debug] event=capture-start mode=window targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
+            NSStringFromCGSize(window.bounds.size), rootVCAddr, targetViewAddr,
+            NSStringFromCGSize(targetView.bounds.size),
+            NSStringFromCGSize(rootVC.view.bounds.size))
       let screenshot = renderer.image { _ in
         // iOS draws a blinking caret in any first-responder text input. Captures
         // taken at different points along the blink cycle produce flaky pixel
@@ -152,6 +158,8 @@ extension View {
         window.endEditing(true)
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
+      NSLog("[snapshot-debug] event=capture-end mode=window success=1 targetSize=%@ rootVC=%lx targetView=%lx",
+            NSStringFromCGSize(window.bounds.size), rootVCAddr, targetViewAddr)
       return .success(screenshot)
     }
 
@@ -189,9 +197,18 @@ extension View {
     let format = UIGraphicsImageRendererFormat()
     format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
     let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+    let rootVCAddr = UInt(bitPattern: ObjectIdentifier(rootVC).hashValue)
+    let targetViewAddr = UInt(bitPattern: ObjectIdentifier(targetView).hashValue)
+    let modeDescription = renderingMode.map { "\($0)" } ?? "default"
+    NSLog("[snapshot-debug] event=capture-start mode=%@ targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
+          modeDescription, NSStringFromCGSize(targetSize), rootVCAddr, targetViewAddr,
+          NSStringFromCGSize(targetView.bounds.size),
+          NSStringFromCGSize(rootVC.view.bounds.size))
     let image = renderer.image { context in
       drawCode(context.cgContext)
     }
+    NSLog("[snapshot-debug] event=capture-end mode=%@ success=%d targetSize=%@ rootVC=%lx targetView=%lx",
+          modeDescription, success ? 1 : 0, NSStringFromCGSize(targetSize), rootVCAddr, targetViewAddr)
     if !success {
       return .failure(RenderingError.failedRendering(targetSize))
     }
