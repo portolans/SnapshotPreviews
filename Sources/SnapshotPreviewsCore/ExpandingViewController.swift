@@ -24,6 +24,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
 
   private var didCall = false
   var previousHeight: CGFloat?
+  var pendingContentSizeRetries: Int = 0
 
   var heightAnchor: NSLayoutConstraint?
   private var widthAnchor: NSLayoutConstraint?
@@ -55,6 +56,11 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     heightAnchor = nil
     widthAnchor = nil
     previousHeight = nil
+    pendingContentSizeRetries = 0
+  }
+
+  func setNeedsAnotherLayoutPass() {
+    view.setNeedsLayout()
   }
 
   public func setupView(layout: PreviewLayout) {

@@ -29,10 +29,24 @@ protocol ScrollExpansionProviding: AnyObject, FirstScrollViewProviding {
   var previousHeight: CGFloat? { get set }
   var heightAnchor: NSLayoutConstraint? { get }
   var supportsExpansion: Bool { get }
+  // Tracks how many times we've deferred completion waiting for the inner
+  // scroll view's contentSize to be populated. iOS 18 reordered hosting
+  // controller layout passes so the inner UIKit layout (where contentSize
+  // is assigned) can lag the outer viewDidLayoutSubviews — without this
+  // counter we'd race into complete() at one screen-height.
+  var pendingContentSizeRetries: Int { get set }
+  // Asks the host to schedule another layout pass. UIKit hosts implement
+  // this as view.setNeedsLayout(); AppKit / unsupported platforms can no-op.
+  func setNeedsAnotherLayoutPass()
 }
 
 extension ScrollExpansionProviding {
+  func setNeedsAnotherLayoutPass() {}
+
   func updateHeight(_ complete: (() -> Void)) {
+    // Cap on contentSize-not-laid-out retries before we give up and complete
+    // anyway. Prevents an infinite wait on a genuinely empty scroll view.
+    let maxPendingContentSizeRetries = 10
     // If heightAnchor isn't set, this was a fixed size and we don't expand the scroll view
     guard let heightAnchor else {
       complete()
@@ -42,6 +56,19 @@ extension ScrollExpansionProviding {
     let supportsExpansion = supportsExpansion
     let scrollView = firstScrollView
     if let scrollView, supportsExpansion {
+      // Layout-pass race: on the first viewDidLayoutSubviews the inner
+      // scroll view may not have laid out yet, so contentHeight is 0 and
+      // diff is -visibleHeight. Without this guard we'd take the else
+      // branch below and complete() at one screen-height. Defer until we
+      // actually see a contentSize, capped at maxPendingContentSizeRetries
+      // so a truly empty scroll view eventually completes.
+      if previousHeight == nil,
+         scrollView.contentHeight == 0,
+         pendingContentSizeRetries < maxPendingContentSizeRetries {
+        pendingContentSizeRetries += 1
+        setNeedsAnotherLayoutPass()
+        return
+      }
       let diff = Int(scrollView.contentHeight - scrollView.visibleContentHeight)
       if abs(diff) > 0 {
         if previousHeight != nil || diff > 0 {

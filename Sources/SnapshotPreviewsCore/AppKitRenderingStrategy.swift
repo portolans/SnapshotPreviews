@@ -115,6 +115,7 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
   }
   var heightAnchor: NSLayoutConstraint?
   var previousHeight: CGFloat?
+  var pendingContentSizeRetries: Int = 0
 
   public var rendered: ((EmergeRenderingMode?, Float?, Bool?, Bool?) -> Void)? {
     didSet { didCall = false }
