@@ -121,18 +121,21 @@ extension View {
     targetView: UIView,
     maxSize: Double = 1_000_000) -> Result<UIImage, RenderingError>
   {
-    // iOS draws a blinking caret in any first-responder text input. Captures
-    // taken at different points along the blink cycle produce flaky pixel
-    // diffs in keyboard-bearing previews. Resigning first responder dismisses
-    // the caret so each snapshot renders deterministically.
-    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-
     if renderingMode == EmergeRenderingMode.window {
       let format = UIGraphicsImageRendererFormat()
       format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
       let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
       let screenshot = renderer.image { _ in
-          window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        // iOS draws a blinking caret in any first-responder text input. Captures
+        // taken at different points along the blink cycle produce flaky pixel
+        // diffs in keyboard-bearing previews. endEditing(true) walks the view
+        // hierarchy synchronously and dismisses the caret so each snapshot
+        // renders deterministically. Fire immediately before render so view
+        // controllers that re-acquire focus during view setup (e.g. via
+        // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+        // capture happens.
+        window.endEditing(true)
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
       return .success(screenshot)
     }
@@ -189,6 +192,15 @@ extension CGSize {
 
 extension UIView {
   func render(size: CGSize, mode: EmergeRenderingMode?, context: CGContext) -> Bool {
+    // iOS draws a blinking caret in any first-responder text input. Captures
+    // taken at different points along the blink cycle produce flaky pixel
+    // diffs in keyboard-bearing previews. endEditing(true) walks the view
+    // hierarchy synchronously and dismisses the caret so each snapshot
+    // renders deterministically. Fire immediately before render so view
+    // controllers that re-acquire focus during view setup (e.g. via
+    // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+    // capture happens.
+    endEditing(true)
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
