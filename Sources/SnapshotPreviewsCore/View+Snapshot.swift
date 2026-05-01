@@ -39,6 +39,13 @@ extension View {
 
     let windowRootVC = Self.setupRootVC(subVC: controller)
     window.rootViewController = windowRootVC
+    // Drain layout passes triggered by safe-area propagation. The first call
+    // propagates window safeAreaInsets to descendants, firing safeAreaInsetsDidChange;
+    // consumer view-controller overrides typically call setNeedsLayout in response,
+    // so a second call is needed to flush that cascade before the settle loop
+    // measures intrinsicContentSize.
+    windowRootVC.view.layoutIfNeeded()
+    windowRootVC.view.layoutIfNeeded()
     return controller
   }
 
