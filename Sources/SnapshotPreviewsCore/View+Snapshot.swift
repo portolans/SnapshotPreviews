@@ -126,7 +126,16 @@ extension View {
       format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
       let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
       let screenshot = renderer.image { _ in
-          window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        // iOS draws a blinking caret in any first-responder text input. Captures
+        // taken at different points along the blink cycle produce flaky pixel
+        // diffs in keyboard-bearing previews. endEditing(true) walks the view
+        // hierarchy synchronously and dismisses the caret so each snapshot
+        // renders deterministically. Fire immediately before render so view
+        // controllers that re-acquire focus during view setup (e.g. via
+        // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+        // capture happens.
+        window.endEditing(true)
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
       return .success(screenshot)
     }
@@ -183,6 +192,21 @@ extension CGSize {
 
 extension UIView {
   func render(size: CGSize, mode: EmergeRenderingMode?, context: CGContext) -> Bool {
+    // iOS draws a blinking caret in any first-responder text input. Captures
+    // taken at different points along the blink cycle produce flaky pixel
+    // diffs in keyboard-bearing previews. endEditing(true) walks the view
+    // hierarchy synchronously and dismisses the caret so each snapshot
+    // renders deterministically. Fire immediately before render so view
+    // controllers that re-acquire focus during view setup (e.g. via
+    // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+    // capture happens.
+    //
+    // Escalate to the host window when available: a11y wrappers
+    // (`AccessibilitySnapshotView`) render the inner content into a separate
+    // sibling view that's not in `self`'s subtree, so endEditing on `self`
+    // alone misses the inner first responder. Calling endEditing on the
+    // window covers the whole hierarchy.
+    (window ?? self).endEditing(true)
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
