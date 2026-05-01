@@ -72,6 +72,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     lastObservedContentHeight = nil
     pendingIntrinsicSizeRetries = 0
     lastObservedIntrinsicSize = nil
+    didAppear = false
   }
 
   var hostFittingSize: CGSize? {
@@ -111,8 +112,30 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     stopAndResetTimer()
   }
 
+  // Tracks whether viewDidAppear has fired. Layout passes that fire BEFORE
+  // the view appears can read a transient view tree — e.g. a SwiftUI body
+  // that returns EmptyView while @State is still nil and only mutates to its
+  // final value inside viewDidAppear (`SelfRewardClaimViewController` was the
+  // canary case: width collapsed 1418 → 786 in some captures because the
+  // a11y legend depended on content the body wasn't yet rendering). Settling
+  // on those passes locks in the wrong dimensions. Gating the settle loop
+  // on this flag means we only commit after viewDidAppear has fired and any
+  // state changes it triggers have had a chance to propagate.
+  private var didAppear = false
+
   public override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    if didAppear {
+      updateScrollViewHeight()
+    }
+  }
+
+  public override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    didAppear = true
+    // Kick off the first settle attempt now that any viewDidAppear-driven
+    // state mutations have had their chance to fire. The retry-on-instability
+    // loop takes over from here via setNeedsLayout → next viewDidLayoutSubviews.
     updateScrollViewHeight()
   }
 
