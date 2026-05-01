@@ -72,6 +72,14 @@ extension View {
           // When a class-level a11yWrapper is provided we treat it as opt-in for every preview unless that preview explicitly disabled accessibility.
           // This lets test bundles run a single a11y-overlaying SnapshotTest subclass over their full preview set without per-#Preview annotations.
           if let a11yWrapper, accessibilityEnabled != false {
+            // Dismiss first responder on the window BEFORE the a11y wrapper is
+            // constructed. Wrappers like AccessibilitySnapshotView typically
+            // capture the inner view as a static image at construction time
+            // (via drawHierarchy / snapshotView) — by the time our render-site
+            // endEditing in UIView.render fires on the wrapper, the inner
+            // image with its blinking caret is already baked in. Firing here
+            // catches the inner first responder before the snapshot is baked.
+            window.endEditing(true)
             let a11yView = a11yWrapper(controller, window, layout)
             let result = Self.takeSnapshot(layout: .sizeThatFits, renderingMode: renderingMode, window: window, rootVC: containerVC, targetView: a11yView)
             a11yView.removeFromSuperview()
