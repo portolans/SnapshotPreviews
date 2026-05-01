@@ -72,6 +72,14 @@ extension View {
           // When a class-level a11yWrapper is provided we treat it as opt-in for every preview unless that preview explicitly disabled accessibility.
           // This lets test bundles run a single a11y-overlaying SnapshotTest subclass over their full preview set without per-#Preview annotations.
           if let a11yWrapper, accessibilityEnabled != false {
+            // Dismiss first responder on the window BEFORE the a11y wrapper is
+            // constructed. Wrappers like AccessibilitySnapshotView typically
+            // capture the inner view as a static image at construction time
+            // (via drawHierarchy / snapshotView) — by the time our render-site
+            // endEditing in UIView.render fires on the wrapper, the inner
+            // image with its blinking caret is already baked in. Firing here
+            // catches the inner first responder before the snapshot is baked.
+            window.endEditing(true)
             let a11yView = a11yWrapper(controller, window, layout)
             let result = Self.takeSnapshot(layout: .sizeThatFits, renderingMode: renderingMode, window: window, rootVC: containerVC, targetView: a11yView)
             a11yView.removeFromSuperview()
@@ -126,7 +134,16 @@ extension View {
       format.scale = SnapshotRenderScale.value(defaultScale: window.screen.scale)
       let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
       let screenshot = renderer.image { _ in
-          window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        // iOS draws a blinking caret in any first-responder text input. Captures
+        // taken at different points along the blink cycle produce flaky pixel
+        // diffs in keyboard-bearing previews. endEditing(true) walks the view
+        // hierarchy synchronously and dismisses the caret so each snapshot
+        // renders deterministically. Fire immediately before render so view
+        // controllers that re-acquire focus during view setup (e.g. via
+        // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+        // capture happens.
+        window.endEditing(true)
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
       return .success(screenshot)
     }
@@ -183,6 +200,21 @@ extension CGSize {
 
 extension UIView {
   func render(size: CGSize, mode: EmergeRenderingMode?, context: CGContext) -> Bool {
+    // iOS draws a blinking caret in any first-responder text input. Captures
+    // taken at different points along the blink cycle produce flaky pixel
+    // diffs in keyboard-bearing previews. endEditing(true) walks the view
+    // hierarchy synchronously and dismisses the caret so each snapshot
+    // renders deterministically. Fire immediately before render so view
+    // controllers that re-acquire focus during view setup (e.g. via
+    // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
+    // capture happens.
+    //
+    // Escalate to the host window when available: a11y wrappers
+    // (`AccessibilitySnapshotView`) render the inner content into a separate
+    // sibling view that's not in `self`'s subtree, so endEditing on `self`
+    // alone misses the inner first responder. Calling endEditing on the
+    // window covers the whole hierarchy.
+    (window ?? self).endEditing(true)
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
