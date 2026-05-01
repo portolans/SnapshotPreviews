@@ -116,6 +116,7 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
   var heightAnchor: NSLayoutConstraint?
   var previousHeight: CGFloat?
   var pendingContentSizeRetries: Int = 0
+  var lastObservedContentHeight: CGFloat?
 
   func setNeedsAnotherLayoutPass() {
     view.needsLayout = true
@@ -149,6 +150,9 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
     widthAnchor?.isActive = false
     heightAnchor = nil
     widthAnchor = nil
+    previousHeight = nil
+    pendingContentSizeRetries = 0
+    lastObservedContentHeight = nil
   }
 
   public func setupView(layout: PreviewLayout) {

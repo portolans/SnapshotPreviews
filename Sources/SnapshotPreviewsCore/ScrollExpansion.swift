@@ -30,11 +30,15 @@ protocol ScrollExpansionProviding: AnyObject, FirstScrollViewProviding {
   var heightAnchor: NSLayoutConstraint? { get }
   var supportsExpansion: Bool { get }
   // Tracks how many times we've deferred completion waiting for the inner
-  // scroll view's contentSize to be populated. iOS 18 reordered hosting
+  // scroll view's contentSize to stabilize. iOS 18 reordered hosting
   // controller layout passes so the inner UIKit layout (where contentSize
-  // is assigned) can lag the outer viewDidLayoutSubviews — without this
-  // counter we'd race into complete() at one screen-height.
+  // is assigned) can lag — and may land at a partial value before the
+  // final one — without this counter we'd race into complete() at the
+  // wrong height.
   var pendingContentSizeRetries: Int { get set }
+  // Last contentSize observation. Used to detect stabilization: we only
+  // commit when two consecutive passes report the same height.
+  var lastObservedContentHeight: CGFloat? { get set }
   // Asks the host to schedule another layout pass. UIKit hosts implement
   // this as view.setNeedsLayout(); AppKit / unsupported platforms can no-op.
   func setNeedsAnotherLayoutPass()
@@ -44,8 +48,8 @@ extension ScrollExpansionProviding {
   func setNeedsAnotherLayoutPass() {}
 
   func updateHeight(_ complete: (() -> Void)) {
-    // Cap on contentSize-not-laid-out retries before we give up and complete
-    // anyway. Prevents an infinite wait on a genuinely empty scroll view.
+    // Cap on contentSize-not-stabilized retries before we give up and complete
+    // anyway. Prevents an infinite wait on a genuinely empty / animating view.
     let maxPendingContentSizeRetries = 10
     // If heightAnchor isn't set, this was a fixed size and we don't expand the scroll view
     guard let heightAnchor else {
@@ -56,15 +60,17 @@ extension ScrollExpansionProviding {
     let supportsExpansion = supportsExpansion
     let scrollView = firstScrollView
     if let scrollView, supportsExpansion {
-      // Layout-pass race: on the first viewDidLayoutSubviews the inner
-      // scroll view may not have laid out yet, so contentHeight is 0 and
-      // diff is -visibleHeight. Without this guard we'd take the else
-      // branch below and complete() at one screen-height. Defer until we
-      // actually see a contentSize, capped at maxPendingContentSizeRetries
-      // so a truly empty scroll view eventually completes.
+      // Stabilization: scroll content can land at a partial height before its
+      // final size when SwiftUI hosting / UIKit child layout completes in
+      // multiple passes. We retry until we see the same non-zero contentHeight
+      // on two consecutive passes — a stable observation — before committing.
+      // Without this, we capture at intermediate layout states and produce
+      // run-to-run dimension drift on iOS 18 / Apple Silicon.
+      let currentContentHeight = scrollView.contentHeight
       guard previousHeight != nil
-              || scrollView.contentHeight > 0
+              || (currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight)
               || pendingContentSizeRetries >= maxPendingContentSizeRetries else {
+        lastObservedContentHeight = currentContentHeight
         pendingContentSizeRetries += 1
         setNeedsAnotherLayoutPass()
         return
