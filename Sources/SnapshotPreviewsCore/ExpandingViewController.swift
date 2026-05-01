@@ -108,7 +108,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     guard !didCall else { return }
 
     let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
-    NSLog("[snapshot-debug] event=runCallback id=%lx error=%@ fitting=%@",
+    snapshotDebugLog("[snapshot-debug] event=runCallback id=%lx error=%@ fitting=%@",
           objectID,
           error?.localizedDescription ?? "nil",
           snapshotDebugString(hostFittingSize ?? .zero))
@@ -132,7 +132,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     super.viewDidLayoutSubviews()
     if didAppear {
       let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
-      NSLog("[snapshot-debug] event=viewDidLayoutSubviews id=%lx didAppear=%d fitting=%@",
+      snapshotDebugLog("[snapshot-debug] event=viewDidLayoutSubviews id=%lx didAppear=%d fitting=%@",
             objectID, didAppear ? 1 : 0,
             snapshotDebugString(hostFittingSize ?? .zero))
       updateScrollViewHeight()
@@ -143,9 +143,9 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     super.viewDidAppear(animated)
     didAppear = true
     let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
-    NSLog("[snapshot-debug] event=viewDidAppear id=%lx fitting=%@",
+    snapshotDebugLog("[snapshot-debug] event=viewDidAppear id=%lx fitting=%@",
           objectID, snapshotDebugString(hostFittingSize ?? .zero))
-    NSLog("[snapshot-debug] event=vc-info id=%lx parent=%@ rootViewType=%@",
+    snapshotDebugLog("[snapshot-debug] event=vc-info id=%lx parent=%@ rootViewType=%@",
           objectID,
           parent?.description ?? "nil",
           String(describing: type(of: rootView)))

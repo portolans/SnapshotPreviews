@@ -142,7 +142,7 @@ extension View {
       let renderer = UIGraphicsImageRenderer(size: window.bounds.size, format: format)
       let rootVCAddr = UInt(bitPattern: ObjectIdentifier(rootVC).hashValue)
       let targetViewAddr = UInt(bitPattern: ObjectIdentifier(targetView).hashValue)
-      NSLog("[snapshot-debug] event=capture-start mode=window targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
+      snapshotDebugLog("[snapshot-debug] event=capture-start mode=window targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
             snapshotDebugString(window.bounds.size), rootVCAddr, targetViewAddr,
             snapshotDebugString(targetView.bounds.size),
             snapshotDebugString(rootVC.view.bounds.size))
@@ -158,7 +158,7 @@ extension View {
         window.endEditing(true)
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
-      NSLog("[snapshot-debug] event=capture-end mode=window success=1 targetSize=%@ rootVC=%lx targetView=%lx",
+      snapshotDebugLog("[snapshot-debug] event=capture-end mode=window success=1 targetSize=%@ rootVC=%lx targetView=%lx",
             snapshotDebugString(window.bounds.size), rootVCAddr, targetViewAddr)
       return .success(screenshot)
     }
@@ -200,14 +200,14 @@ extension View {
     let rootVCAddr = UInt(bitPattern: ObjectIdentifier(rootVC).hashValue)
     let targetViewAddr = UInt(bitPattern: ObjectIdentifier(targetView).hashValue)
     let modeDescription = renderingMode.map { "\($0)" } ?? "default"
-    NSLog("[snapshot-debug] event=capture-start mode=%@ targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
+    snapshotDebugLog("[snapshot-debug] event=capture-start mode=%@ targetSize=%@ rootVC=%lx targetView=%lx targetViewBounds=%@ rootVCViewBounds=%@",
           modeDescription, snapshotDebugString(targetSize), rootVCAddr, targetViewAddr,
           snapshotDebugString(targetView.bounds.size),
           snapshotDebugString(rootVC.view.bounds.size))
     let image = renderer.image { context in
       drawCode(context.cgContext)
     }
-    NSLog("[snapshot-debug] event=capture-end mode=%@ success=%d targetSize=%@ rootVC=%lx targetView=%lx",
+    snapshotDebugLog("[snapshot-debug] event=capture-end mode=%@ success=%d targetSize=%@ rootVC=%lx targetView=%lx",
           modeDescription, success ? 1 : 0, snapshotDebugString(targetSize), rootVCAddr, targetViewAddr)
     if !success {
       return .failure(RenderingError.failedRendering(targetSize))
