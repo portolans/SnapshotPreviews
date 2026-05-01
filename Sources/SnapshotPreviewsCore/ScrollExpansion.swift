@@ -23,7 +23,7 @@ protocol ContentHeightProviding {
 // Cross-platform CGSize formatter for [snapshot-debug] log lines. UIKit's
 // NSStringFromCGSize isn't available on all targets compiled by this file,
 // so we format manually for consistency.
-private func snapshotDebugString(_ size: CGSize) -> String {
+func snapshotDebugString(_ size: CGSize) -> String {
   "{\(size.width), \(size.height)}"
 }
 

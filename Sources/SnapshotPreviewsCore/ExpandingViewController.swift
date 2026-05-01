@@ -111,7 +111,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     NSLog("[snapshot-debug] event=runCallback id=%lx error=%@ fitting=%@",
           objectID,
           error?.localizedDescription ?? "nil",
-          NSStringFromCGSize(hostFittingSize ?? .zero))
+          snapshotDebugString(hostFittingSize ?? .zero))
     didCall = true
     expansionSettled?(rootView.emergeRenderingMode, rootView.precision, rootView.accessibilityEnabled, rootView.appStoreSnapshot, error)
     stopAndResetTimer()
@@ -134,7 +134,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
       let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
       NSLog("[snapshot-debug] event=viewDidLayoutSubviews id=%lx didAppear=%d fitting=%@",
             objectID, didAppear ? 1 : 0,
-            NSStringFromCGSize(hostFittingSize ?? .zero))
+            snapshotDebugString(hostFittingSize ?? .zero))
       updateScrollViewHeight()
     }
   }
@@ -144,7 +144,7 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     didAppear = true
     let objectID = UInt(bitPattern: ObjectIdentifier(self).hashValue)
     NSLog("[snapshot-debug] event=viewDidAppear id=%lx fitting=%@",
-          objectID, NSStringFromCGSize(hostFittingSize ?? .zero))
+          objectID, snapshotDebugString(hostFittingSize ?? .zero))
     NSLog("[snapshot-debug] event=vc-info id=%lx parent=%@ rootViewType=%@",
           objectID,
           parent?.description ?? "nil",
