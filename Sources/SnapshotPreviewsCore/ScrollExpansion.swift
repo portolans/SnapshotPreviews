@@ -62,9 +62,9 @@ extension ScrollExpansionProviding {
       // branch below and complete() at one screen-height. Defer until we
       // actually see a contentSize, capped at maxPendingContentSizeRetries
       // so a truly empty scroll view eventually completes.
-      if previousHeight == nil,
-         scrollView.contentHeight == 0,
-         pendingContentSizeRetries < maxPendingContentSizeRetries {
+      guard previousHeight != nil
+              || scrollView.contentHeight > 0
+              || pendingContentSizeRetries >= maxPendingContentSizeRetries else {
         pendingContentSizeRetries += 1
         setNeedsAnotherLayoutPass()
         return
