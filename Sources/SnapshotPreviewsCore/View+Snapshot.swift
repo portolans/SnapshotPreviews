@@ -200,7 +200,13 @@ extension UIView {
     // controllers that re-acquire focus during view setup (e.g. via
     // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
     // capture happens.
-    endEditing(true)
+    //
+    // Escalate to the host window when available: a11y wrappers
+    // (`AccessibilitySnapshotView`) render the inner content into a separate
+    // sibling view that's not in `self`'s subtree, so endEditing on `self`
+    // alone misses the inner first responder. Calling endEditing on the
+    // window covers the whole hierarchy.
+    (window ?? self).endEditing(true)
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
