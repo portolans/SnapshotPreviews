@@ -94,13 +94,19 @@ extension View {
   }
 
   private static func setupRootVC(subVC: UIViewController) -> UIViewController {
-    let windowRootVC = UIViewController()
+    // UIKit child VCs hosted inside a SwiftUI #Preview still receive window-level safeAreaInsets
+    // through the parent-VC chain; negating them here zeroes the effective inset for every descendant.
+    let windowRootVC = SafeAreaSuppressingViewController()
     windowRootVC.view.bounds = UIScreen.main.bounds
     windowRootVC.view.backgroundColor = .clear
+    windowRootVC.view.insetsLayoutMarginsFromSafeArea = false
+    windowRootVC.view.directionalLayoutMargins = .zero
 
-    let containerVC = UIViewController()
+    let containerVC = SafeAreaSuppressingViewController()
     containerVC.view.backgroundColor = .clear
     containerVC.view.translatesAutoresizingMaskIntoConstraints = false
+    containerVC.view.insetsLayoutMarginsFromSafeArea = false
+    containerVC.view.directionalLayoutMargins = .zero
     windowRootVC.view.addSubview(containerVC.view)
     windowRootVC.addChild(containerVC)
     containerVC.didMove(toParent: windowRootVC)
@@ -252,6 +258,21 @@ extension CALayer {
       }
     }
     return false
+  }
+}
+
+private final class SafeAreaSuppressingViewController: UIViewController {
+  // Negate any window-derived safeAreaInsets so descendants — including UIKit child VCs
+  // wrapped by the SwiftUI #Preview bridge — see effective insets of zero. UIKit clamps
+  // additionalSafeAreaInsets-adjusted insets to >= 0, so this just zeroes the resolved value.
+  override func viewSafeAreaInsetsDidChange() {
+    super.viewSafeAreaInsetsDidChange()
+    let windowInsets = view.window?.safeAreaInsets ?? .zero
+    additionalSafeAreaInsets = UIEdgeInsets(
+      top: -windowInsets.top,
+      left: -windowInsets.left,
+      bottom: -windowInsets.bottom,
+      right: -windowInsets.right)
   }
 }
 #endif
