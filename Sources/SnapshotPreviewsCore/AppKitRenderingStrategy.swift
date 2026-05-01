@@ -127,10 +127,11 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
     view.fittingSize
   }
 
-  func setNeedsAnotherLayoutPass() {
-    view.needsLayout = true
-    updateScrollViewHeight()
-  }
+  // No setNeedsAnotherLayoutPass override — AppKit isn't exercised by our
+  // CI (we run iOS simulator only), so we accept the protocol's no-op default
+  // and the AppKit settle loop falls through to immediate completion. Avoids
+  // having to maintain an AppKit-correct re-entry mechanism for code we
+  // don't actually run.
 
   public var rendered: ((EmergeRenderingMode?, Float?, Bool?, Bool?) -> Void)? {
     didSet { didCall = false }
