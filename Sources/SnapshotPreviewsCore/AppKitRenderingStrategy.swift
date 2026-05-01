@@ -115,6 +115,23 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
   }
   var heightAnchor: NSLayoutConstraint?
   var previousHeight: CGFloat?
+  var pendingContentSizeRetries: Int = 0
+  var lastObservedContentHeight: CGFloat?
+  var pendingIntrinsicSizeRetries: Int = 0
+  var lastObservedIntrinsicSize: CGSize?
+
+  var hostFittingSize: CGSize? {
+    // NSView's `fittingSize` is the AppKit equivalent of UIKit's
+    // systemLayoutSizeFitting(compressedSize) and honors active layout
+    // constraints — same role in the settle loop.
+    view.fittingSize
+  }
+
+  // No setNeedsAnotherLayoutPass override — AppKit isn't exercised by our
+  // CI (we run iOS simulator only), so we accept the protocol's no-op default
+  // and the AppKit settle loop falls through to immediate completion. Avoids
+  // having to maintain an AppKit-correct re-entry mechanism for code we
+  // don't actually run.
 
   public var rendered: ((EmergeRenderingMode?, Float?, Bool?, Bool?) -> Void)? {
     didSet { didCall = false }
@@ -143,6 +160,11 @@ final class AppKitContainer: NSHostingController<EmergeModifierView>, ScrollExpa
     widthAnchor?.isActive = false
     heightAnchor = nil
     widthAnchor = nil
+    previousHeight = nil
+    pendingContentSizeRetries = 0
+    lastObservedContentHeight = nil
+    pendingIntrinsicSizeRetries = 0
+    lastObservedIntrinsicSize = nil
   }
 
   public func setupView(layout: PreviewLayout) {
