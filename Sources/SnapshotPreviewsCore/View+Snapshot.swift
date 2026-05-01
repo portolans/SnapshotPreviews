@@ -190,12 +190,17 @@ extension UIView {
     case .uiView:
       return drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
     case .window, .none:
-      if !size.requiresCoreAnimationSnapshot {
-        return drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
-      } else {
-        layer.layerForSnapshot.render(in: context)
-        return true
-      }
+      // Default to the Core Animation capture path. `drawHierarchy` is
+      // Metal-backed and produces non-deterministic byte output across
+      // identical Apple Silicon runners on iOS 18, breaking byte-equality
+      // checks in CI fleets even when the rendered image is perceptually
+      // identical. `CALayer.render(in:)` is CPU/Core Graphics and is
+      // byte-deterministic. Consumers that need GPU-composited fidelity
+      // (UIVisualEffectView, .blur(radius:), .ultraThinMaterial, MTKView,
+      // CAMetalLayer) can opt back in per-preview via
+      // `.emergeRenderingMode(.uiView)`.
+      layer.layerForSnapshot.render(in: context)
+      return true
     }
   }
 }
