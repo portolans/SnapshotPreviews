@@ -24,6 +24,10 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
 
   private var didCall = false
   var previousHeight: CGFloat?
+  var pendingContentSizeRetries: Int = 0
+  var lastObservedContentHeight: CGFloat?
+  var pendingIntrinsicSizeRetries: Int = 0
+  var lastObservedIntrinsicSize: CGSize?
 
   var heightAnchor: NSLayoutConstraint?
   private var widthAnchor: NSLayoutConstraint?
@@ -43,6 +47,15 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     }
     view.translatesAutoresizingMaskIntoConstraints = false
     view.backgroundColor = .clear
+    // Pin safe-area-derived layout to a stable, zeroed value up front.
+    // UIHostingController otherwise resolves these insets across multiple
+    // layout passes (the host's safeAreaInsets propagate from the window /
+    // scene asynchronously), which translates the rendered content
+    // vertically run-to-run on layouts that read directionalLayoutMargins
+    // (e.g. screens with manual top/bottom padding via UILayoutGuide.
+    // safeAreaLayoutGuide). Zeroing them eliminates that source of drift.
+    view.insetsLayoutMarginsFromSafeArea = false
+    view.directionalLayoutMargins = .zero
   }
 
   @MainActor required dynamic init?(coder aDecoder: NSCoder) {
@@ -55,6 +68,23 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     heightAnchor = nil
     widthAnchor = nil
     previousHeight = nil
+    pendingContentSizeRetries = 0
+    lastObservedContentHeight = nil
+    pendingIntrinsicSizeRetries = 0
+    lastObservedIntrinsicSize = nil
+    didAppear = false
+  }
+
+  var hostFittingSize: CGSize? {
+    // systemLayoutSizeFitting honors the active height/width anchors, which
+    // makes it the canonical "what would this view want to render at" value
+    // we're racing to stabilize. UILayoutFittingCompressedSize asks for the
+    // smallest size satisfying constraints, matching the snapshot intent.
+    view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+  }
+
+  func setNeedsAnotherLayoutPass() {
+    view.setNeedsLayout()
   }
 
   public func setupView(layout: PreviewLayout) {
@@ -82,8 +112,30 @@ public final class ExpandingViewController: UIHostingController<EmergeModifierVi
     stopAndResetTimer()
   }
 
+  // Tracks whether viewDidAppear has fired. Layout passes that fire BEFORE
+  // the view appears can read a transient view tree — e.g. a SwiftUI body
+  // that returns EmptyView while @State is still nil and only mutates to its
+  // final value inside viewDidAppear (`SelfRewardClaimViewController` was the
+  // canary case: width collapsed 1418 → 786 in some captures because the
+  // a11y legend depended on content the body wasn't yet rendering). Settling
+  // on those passes locks in the wrong dimensions. Gating the settle loop
+  // on this flag means we only commit after viewDidAppear has fired and any
+  // state changes it triggers have had a chance to propagate.
+  private var didAppear = false
+
   public override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    if didAppear {
+      updateScrollViewHeight()
+    }
+  }
+
+  public override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    didAppear = true
+    // Kick off the first settle attempt now that any viewDidAppear-driven
+    // state mutations have had their chance to fire. The retry-on-instability
+    // loop takes over from here via setNeedsLayout → next viewDidLayoutSubviews.
     updateScrollViewHeight()
   }
 
