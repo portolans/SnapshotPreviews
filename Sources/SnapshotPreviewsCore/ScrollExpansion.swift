@@ -84,11 +84,28 @@ extension ScrollExpansionProviding {
       // on two consecutive passes — a stable observation — before committing.
       // Without this, we capture at intermediate layout states and produce
       // run-to-run dimension drift on iOS 18 / Apple Silicon.
+      //
+      // Some hosts expose BOTH an inner UIScrollView (whose contentSize is what
+      // this path normally tracks) AND an outer hosting controller whose
+      // intrinsic content size is still flexing — e.g. a screen with a
+      // fixed-size scrollable bottom panel under a SwiftUI body that grows in
+      // multiple layout passes. Inner contentSize stabilizes immediately
+      // (because the panel is fixed), but the outer host's
+      // systemLayoutSizeFitting is still ramping. If we declare "settle
+      // complete" on inner stability alone, capture renders mid-ramp and
+      // produces a few-pixel height flake from run to run. Require BOTH
+      // dimensions to stabilize before completing. Hosts that don't expose a
+      // fitting size (hostFittingSize == nil) implicitly satisfy outer
+      // stability — preserving prior behavior for those callers.
       let currentContentHeight = scrollView.contentHeight
+      let currentFittingSize = hostFittingSize
+      let innerStable = currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight
+      let outerStable = currentFittingSize == nil || currentFittingSize == lastObservedIntrinsicSize
       guard previousHeight != nil
-              || (currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight)
+              || (innerStable && outerStable)
               || pendingContentSizeRetries >= maxPendingContentSizeRetries else {
         lastObservedContentHeight = currentContentHeight
+        lastObservedIntrinsicSize = currentFittingSize
         pendingContentSizeRetries += 1
         setNeedsAnotherLayoutPass()
         return
