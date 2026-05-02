@@ -27,15 +27,36 @@ func snapshotDebugString(_ size: CGSize) -> String {
   "{\(size.width), \(size.height)}"
 }
 
-// Emits a [snapshot-debug] log line via both print() (captured by xcodebuild
-// stdout / CI logs) and NSLog (visible in Console.app for local debugging).
-// NSLog alone goes to os_log on iOS 14+, which xcodebuild's stdout pipe
-// doesn't capture — so the line never lands in CI logs. Routing through
-// print() ensures CI visibility.
+// Emits a [snapshot-debug] log line. xctest's parallel-testing harness
+// drops simulator-side stdout and routes NSLog through os_log, which
+// xcodebuild's stdout pipe doesn't surface in CI. Writing each line to a
+// fixed host-filesystem path (the iOS simulator process can write directly
+// to /tmp on the host) gives us a single grep-able file the CI workflow
+// can cat after the test step. Local debugging is still served by NSLog.
+private let snapshotDebugLogPath = "/tmp/snapshot-debug.log"
+private let snapshotDebugLogQueue = DispatchQueue(label: "snapshot.debug.log")
+
 func snapshotDebugLog(_ format: String, _ args: CVarArg...) {
   let line = String(format: format, arguments: args)
   print(line)
   NSLog("%@", line)
+  // Serialize file appends so concurrent test threads don't interleave bytes
+  // mid-line. The line itself is short (<512 B), so a single write call is
+  // atomic on its own, but the seekToEnd + write pair under the FileHandle
+  // API isn't.
+  snapshotDebugLogQueue.async {
+    let payload = (line + "\n").data(using: .utf8) ?? Data()
+    let url = URL(fileURLWithPath: snapshotDebugLogPath)
+    if FileManager.default.fileExists(atPath: snapshotDebugLogPath) {
+      if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: payload)
+      }
+    } else {
+      try? payload.write(to: url, options: [])
+    }
+  }
 }
 
 protocol FirstScrollViewProviding {
