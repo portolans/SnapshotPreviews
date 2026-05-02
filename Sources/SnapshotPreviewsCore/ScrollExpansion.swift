@@ -129,10 +129,26 @@ extension ScrollExpansionProviding {
       snapshotDebugLog("[snapshot-debug] event=settle path=scroll id=%lx pass=%d contentHeight=%g lastObserved=%@",
             objectID, pendingContentSizeRetries, currentContentHeight,
             lastObservedContentHeight.map { String(describing: $0) } ?? "nil")
+      // Some hosts expose BOTH an inner UIScrollView (whose contentSize is what
+      // this path normally tracks) AND an outer hosting controller whose
+      // intrinsic content size is still flexing — e.g. a screen with a
+      // fixed-size scrollable bottom panel under a SwiftUI body that grows in
+      // multiple layout passes. Inner contentSize stabilizes immediately
+      // (because the panel is fixed), but the outer host's
+      // systemLayoutSizeFitting is still ramping. If we declare "settle
+      // complete" on inner stability alone, capture renders mid-ramp and
+      // produces a few-pixel height flake from run to run. Require BOTH
+      // dimensions to stabilize before completing. Hosts that don't expose a
+      // fitting size (hostFittingSize == nil) implicitly satisfy outer
+      // stability — preserving prior behavior for those callers.
+      let currentFittingSize = hostFittingSize
+      let innerStable = currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight
+      let outerStable = currentFittingSize == nil || currentFittingSize == lastObservedIntrinsicSize
       guard previousHeight != nil
-              || (currentContentHeight > 0 && lastObservedContentHeight == currentContentHeight)
+              || (innerStable && outerStable)
               || pendingContentSizeRetries >= maxPendingContentSizeRetries else {
         lastObservedContentHeight = currentContentHeight
+        lastObservedIntrinsicSize = currentFittingSize
         pendingContentSizeRetries += 1
         setNeedsAnotherLayoutPass()
         return
