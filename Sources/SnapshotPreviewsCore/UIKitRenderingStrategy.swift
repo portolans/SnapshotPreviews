@@ -34,19 +34,29 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   private let a11yWrapper: ((UIViewController, UIWindow, PreviewLayout) -> UIView)?
   private var geometryUpdateError: Error?
 
-  // The first preview rendered in a freshly-created window settles ~bottom-safe-area
-  // shorter than every subsequent one: UIKit only keeps the bottom inset resolved for
-  // a view grown taller than the window AFTER the window has already expanded one such
-  // view through a full (asynchronous) layout settle. A static layout pass doesn't
-  // reproduce it — only a real expansion does. Since the strategy (and its window) is
-  // cached and reused across a subclass's whole preview set, whichever preview a
-  // parallel test worker runs first captures wrong, making heights order-dependent.
-  // Run one throwaway render to establish that state, then render again for the
-  // captured result. The state is established by the full render (expansion *and*
-  // capture) — an expansion-only warm-up leaves some previews at the collapsed
-  // height — so the first preview pays one extra render. In-process callers
-  // (`SnapshotTest`, 10s/render budget) absorb this comfortably.
-  private var hasWarmedUp = false
+  // The first over-tall view captured in a freshly-created window settles
+  // ~bottom-safe-area shorter than every subsequent one: UIKit only keeps the bottom
+  // inset resolved for a view grown taller than the window AFTER the window has already
+  // expanded *and captured* one such view (the collapse happens in the accessibility
+  // capture path, so a non-a11y or expansion-only warm-up doesn't reproduce it). The
+  // strategy (and its window) is cached and reused across a subclass's whole preview
+  // set, so that anomaly otherwise lands on whichever preview renders first, making
+  // heights order-dependent. We pre-empt it with one throwaway warm-up render before
+  // the first real capture.
+  //
+  // Three things make the warm-up robust rather than fragile:
+  //   - A dedicated, guaranteed-over-tall dummy (not the first real preview, which may
+  //     be short and never expand — leaving the state unestablished for later previews),
+  //     rendered through the strategy's own `a11yWrapper` so it exercises the path that
+  //     actually collapses.
+  //   - Warmed lazily per interface orientation, *after* orientation settles, so a
+  //     rotated-first preview is captured in an already-warmed orientation.
+  //   - `warmedOrientations` is recorded only when the warm-up completes, and real
+  //     renders that arrive mid-warm-up queue behind it — so a concurrent caller can't
+  //     skip the warm-up and capture against an un-warmed window.
+  private var warmedOrientations: Set<UIInterfaceOrientation> = []
+  private var isWarmingUp = false
+  private var queuedRenders: [() -> Void] = []
 
   @MainActor
   public func render(
@@ -54,19 +64,10 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       completion: @escaping (SnapshotResult) -> Void
   ) {
       Self.setup()
-      guard hasWarmedUp else {
-          hasWarmedUp = true
-          performRender(preview: preview) { [weak self] _ in
-              // Discard the warm-up capture; render again now that the window's
-              // safe-area state matches what every later preview will see.
-              self?.render(preview: preview, completion: completion)
-          }
-          return
-      }
       geometryUpdateError = nil
       let targetOrientation = preview.orientation.toInterfaceOrientation()
       guard #available(iOS 16.0, *), windowScene!.interfaceOrientation != targetOrientation else {
-          performRender(preview: preview, completion: completion)
+          warmThenRender(preview: preview, completion: completion)
           return
       }
     
@@ -102,7 +103,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       }
 
       if windowScene!.interfaceOrientation == targetOrientation {
-          performRender(preview: preview, completion: completion)
+          warmThenRender(preview: preview, completion: completion)
       } else {
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
               self?.waitForOrientationChange(targetOrientation: targetOrientation, preview: preview, attempts: attempts - 1, completion: completion)
@@ -126,5 +127,77 @@ public class UIKitRenderingStrategy: RenderingStrategy {
         completion(result)
       }
   }
+
+  // Ensures the current interface orientation has been warmed (see `warmedOrientations`)
+  // before capturing. Callers reach here only once orientation has settled, so the
+  // warm-up runs in the orientation the capture will use.
+  @MainActor private func warmThenRender(
+    preview: SnapshotPreviewsCore.Preview,
+    completion: @escaping (SnapshotResult) -> Void
+  ) {
+    let orientation = windowScene?.interfaceOrientation ?? .portrait
+    guard !warmedOrientations.contains(orientation) else {
+      performRender(preview: preview, completion: completion)
+      return
+    }
+    // Defer the real render until the (asynchronous) warm-up settles, so neither this
+    // caller nor a concurrent one captures against an un-warmed window.
+    queuedRenders.append { [weak self] in
+      self?.performRender(preview: preview, completion: completion)
+    }
+    guard !isWarmingUp else { return }
+    isWarmingUp = true
+    warmUp { [weak self] in
+      guard let self else { return }
+      self.warmedOrientations.insert(orientation)
+      self.isWarmingUp = false
+      let queued = self.queuedRenders
+      self.queuedRenders = []
+      queued.forEach { $0() }
+    }
+  }
+
+  // Throwaway render of a view guaranteed taller than the window, to establish the
+  // window's safe-area state before the first real capture. Crucially it renders
+  // through the strategy's own `a11yWrapper`: the safe-area collapse this warms past
+  // happens in the accessibility capture path (AccessibilitySnapshotView), so warming
+  // without that wrapper leaves a11y previews at the collapsed height.
+  @MainActor private func warmUp(completion: @escaping () -> Void) {
+    let dummy = WarmUpScrollView(contentHeight: max(window.bounds.height, 1) * 2)
+    let controller = dummy.makeExpandingView(layout: .device, window: window)
+    dummy.snapshot(
+      layout: .device,
+      controller: controller,
+      window: window,
+      async: false,
+      a11yWrapper: a11yWrapper) { _ in
+        completion()
+      }
+  }
+}
+
+// A scroll view whose content is taller than its frame, used only to warm up the
+// render window (see `UIKitRenderingStrategy.warmUp`). Mirrors the `.always` content
+// inset of typical UIKit-hosted previews so the warm-up reproduces the first-expansion
+// safe-area collapse it exists to pre-empt.
+private struct WarmUpScrollView: UIViewRepresentable {
+  let contentHeight: CGFloat
+
+  func makeUIView(context: Context) -> UIScrollView {
+    let scrollView = UIScrollView()
+    scrollView.contentInsetAdjustmentBehavior = .always
+    let content = UIView()
+    content.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.addSubview(content)
+    NSLayoutConstraint.activate([
+      content.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+      content.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+      content.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+      content.heightAnchor.constraint(equalToConstant: contentHeight),
+    ])
+    return scrollView
+  }
+
+  func updateUIView(_ uiView: UIScrollView, context: Context) {}
 }
 #endif
