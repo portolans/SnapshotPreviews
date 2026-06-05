@@ -42,21 +42,19 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   // strategy (and its window) is cached and reused across a subclass's whole preview
   // set, so that anomaly otherwise lands on whichever preview renders first, making
   // heights order-dependent. We pre-empt it with one throwaway warm-up render before
-  // the first real capture.
-  //
-  // Three things make the warm-up robust rather than fragile:
+  // the first real capture in each orientation:
   //   - A dedicated, guaranteed-over-tall dummy (not the first real preview, which may
   //     be short and never expand — leaving the state unestablished for later previews),
   //     rendered through the strategy's own `a11yWrapper` so it exercises the path that
   //     actually collapses.
   //   - Warmed lazily per interface orientation, *after* orientation settles, so a
   //     rotated-first preview is captured in an already-warmed orientation.
-  //   - `warmedOrientations` is recorded only when the warm-up completes, and real
-  //     renders that arrive mid-warm-up queue behind it — so a concurrent caller can't
-  //     skip the warm-up and capture against an un-warmed window.
+  //
+  // No locking/queue is needed: callers drive rendering serially — `SnapshotTest`
+  // awaits each render's completion (`wait(for:)`) before the next, and parallel
+  // testing runs in separate processes — so `render` is never re-entered before its
+  // completion fires, even though a render has async suspension points internally.
   private var warmedOrientations: Set<UIInterfaceOrientation> = []
-  private var isWarmingUp = false
-  private var queuedRenders: [(preview: SnapshotPreviewsCore.Preview, completion: (SnapshotResult) -> Void)] = []
 
   @MainActor
   public func render(
@@ -140,30 +138,13 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       performRender(preview: preview, completion: completion)
       return
     }
-    // Defer the real render until the (asynchronous) warm-up settles, so neither this
-    // caller nor a concurrent one captures against an un-warmed window.
-    queuedRenders.append((preview, completion))
-    guard !isWarmingUp else { return }
-    isWarmingUp = true
+    // Warm this orientation, then render once it settles. Safe to defer the render to
+    // the warm-up's completion because rendering is serial (see `warmedOrientations`):
+    // no other render will start in the meantime.
     warmUp { [weak self] in
       guard let self else { return }
       self.warmedOrientations.insert(orientation)
-      self.isWarmingUp = false
-      self.drainQueuedRenders()
-    }
-  }
-
-  // Drains deferred renders one at a time, re-routing each back through
-  // `warmThenRender` so it re-checks its own orientation (and triggers another warm-up
-  // if it targets an orientation the finished warm-up didn't cover). Serial — the next
-  // starts only after the previous capture's completion fires — so back-to-back renders
-  // never replace the shared window's `rootViewController` mid-capture.
-  @MainActor private func drainQueuedRenders() {
-    guard !queuedRenders.isEmpty else { return }
-    let next = queuedRenders.removeFirst()
-    warmThenRender(preview: next.preview) { [weak self] result in
-      next.completion(result)
-      self?.drainQueuedRenders()
+      self.performRender(preview: preview, completion: completion)
     }
   }
 
