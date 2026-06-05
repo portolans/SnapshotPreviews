@@ -41,7 +41,11 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   // reproduce it — only a real expansion does. Since the strategy (and its window) is
   // cached and reused across a subclass's whole preview set, whichever preview a
   // parallel test worker runs first captures wrong, making heights order-dependent.
-  // Run one throwaway expansion to establish that state before the first real capture.
+  // Run one throwaway render to establish that state, then render again for the
+  // captured result. The state is established by the full render (expansion *and*
+  // capture) — an expansion-only warm-up leaves some previews at the collapsed
+  // height — so the first preview pays one extra render. In-process callers
+  // (`SnapshotTest`, 10s/render budget) absorb this comfortably.
   private var hasWarmedUp = false
 
   @MainActor
@@ -52,7 +56,9 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       Self.setup()
       guard hasWarmedUp else {
           hasWarmedUp = true
-          warmUp(preview: preview) { [weak self] in
+          performRender(preview: preview) { [weak self] _ in
+              // Discard the warm-up capture; render again now that the window's
+              // safe-area state matches what every later preview will see.
               self?.render(preview: preview, completion: completion)
           }
           return
@@ -119,24 +125,6 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       a11yWrapper: a11yWrapper) { result in
         completion(result)
       }
-  }
-
-  // Establishes the window's safe-area state (see `hasWarmedUp`) by running a real
-  // expansion settle, then bails before capture. The state is set during expansion,
-  // not during `takeSnapshot`, so this deliberately skips the snapshot work — the
-  // first preview would otherwise pay a full doubled render (and risk the caller's
-  // per-render timeout). Drives the same settle path as `snapshot(...)` by installing
-  // an `expansionSettled` callback that completes instead of capturing.
-  @MainActor private func warmUp(
-    preview: SnapshotPreviewsCore.Preview,
-    completion: @escaping () -> Void
-  ) {
-    UIView.setAnimationsEnabled(false)
-    let view = preview.view()
-    let controller = view.makeExpandingView(layout: preview.layout, window: window)
-    controller.expansionSettled = { _, _, _, _, _ in
-      completion()
-    }
   }
 }
 #endif
