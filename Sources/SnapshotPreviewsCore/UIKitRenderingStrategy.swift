@@ -34,12 +34,32 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   private let a11yWrapper: ((UIViewController, UIWindow, PreviewLayout) -> UIView)?
   private var geometryUpdateError: Error?
 
+  // The first preview rendered in a freshly-created window settles ~bottom-safe-area
+  // shorter than every subsequent one: UIKit only keeps the bottom inset resolved for
+  // a view grown taller than the window AFTER the window has already expanded one such
+  // view through a full (asynchronous) layout settle. A static layout pass doesn't
+  // reproduce it — only a real expansion does. Since the strategy (and its window) is
+  // cached and reused across a subclass's whole preview set, whichever preview a
+  // parallel test worker runs first captures wrong, making heights order-dependent.
+  // Run one throwaway expansion of the first preview to establish that state, then
+  // render it again for the captured result.
+  private var hasWarmedUp = false
+
   @MainActor
   public func render(
       preview: SnapshotPreviewsCore.Preview,
       completion: @escaping (SnapshotResult) -> Void
   ) {
       Self.setup()
+      if !hasWarmedUp {
+          hasWarmedUp = true
+          performRender(preview: preview) { [weak self] _ in
+              // Discard the warm-up capture; render again now that the window's
+              // safe-area state matches what every later preview will see.
+              self?.render(preview: preview, completion: completion)
+          }
+          return
+      }
       geometryUpdateError = nil
       let targetOrientation = preview.orientation.toInterfaceOrientation()
       guard #available(iOS 16.0, *), windowScene!.interfaceOrientation != targetOrientation else {
