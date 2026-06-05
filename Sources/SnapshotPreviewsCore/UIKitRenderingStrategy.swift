@@ -34,6 +34,28 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   private let a11yWrapper: ((UIViewController, UIWindow, PreviewLayout) -> UIView)?
   private var geometryUpdateError: Error?
 
+  // The first over-tall view captured in a freshly-created window settles
+  // ~bottom-safe-area shorter than every subsequent one: UIKit only keeps the bottom
+  // inset resolved for a view grown taller than the window AFTER the window has already
+  // expanded *and captured* one such view (the collapse happens in the accessibility
+  // capture path, so a non-a11y or expansion-only warm-up doesn't reproduce it). The
+  // strategy (and its window) is cached and reused across a subclass's whole preview
+  // set, so that anomaly otherwise lands on whichever preview renders first, making
+  // heights order-dependent. We pre-empt it with one throwaway warm-up render before
+  // the first real capture in each orientation:
+  //   - A dedicated, guaranteed-over-tall dummy (not the first real preview, which may
+  //     be short and never expand — leaving the state unestablished for later previews),
+  //     rendered through the strategy's own `a11yWrapper` so it exercises the path that
+  //     actually collapses.
+  //   - Warmed lazily per interface orientation, *after* orientation settles, so a
+  //     rotated-first preview is captured in an already-warmed orientation.
+  //
+  // No locking/queue is needed: callers drive rendering serially — `SnapshotTest`
+  // awaits each render's completion (`wait(for:)`) before the next, and parallel
+  // testing runs in separate processes — so `render` is never re-entered before its
+  // completion fires, even though a render has async suspension points internally.
+  private var warmedOrientations: Set<UIInterfaceOrientation> = []
+
   @MainActor
   public func render(
       preview: SnapshotPreviewsCore.Preview,
@@ -43,7 +65,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       geometryUpdateError = nil
       let targetOrientation = preview.orientation.toInterfaceOrientation()
       guard #available(iOS 16.0, *), windowScene!.interfaceOrientation != targetOrientation else {
-          performRender(preview: preview, completion: completion)
+          warmThenRender(preview: preview, completion: completion)
           return
       }
     
@@ -79,7 +101,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
       }
 
       if windowScene!.interfaceOrientation == targetOrientation {
-          performRender(preview: preview, completion: completion)
+          warmThenRender(preview: preview, completion: completion)
       } else {
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
               self?.waitForOrientationChange(targetOrientation: targetOrientation, preview: preview, attempts: attempts - 1, completion: completion)
@@ -103,5 +125,74 @@ public class UIKitRenderingStrategy: RenderingStrategy {
         completion(result)
       }
   }
+
+  // Ensures the current interface orientation has been warmed (see `warmedOrientations`)
+  // before capturing. Callers reach here only once orientation has settled, so the
+  // warm-up runs in the orientation the capture will use.
+  @MainActor private func warmThenRender(
+    preview: SnapshotPreviewsCore.Preview,
+    completion: @escaping (SnapshotResult) -> Void
+  ) {
+    let orientation = windowScene?.interfaceOrientation ?? .portrait
+    // The collapse only occurs in the accessibility capture path, so only a11y
+    // strategies need warming. A plain `SnapshotTest` strategy (nil `a11yWrapper`)
+    // would gain nothing from a warm-up — just an extra render against the caller's
+    // per-render timeout — so skip it there.
+    guard a11yWrapper != nil, !warmedOrientations.contains(orientation) else {
+      performRender(preview: preview, completion: completion)
+      return
+    }
+    // Warm this orientation, then render once it settles. Safe to defer the render to
+    // the warm-up's completion because rendering is serial (see `warmedOrientations`):
+    // no other render will start in the meantime.
+    warmUp { [weak self] in
+      guard let self else { return }
+      self.warmedOrientations.insert(orientation)
+      self.performRender(preview: preview, completion: completion)
+    }
+  }
+
+  // Throwaway render of a view guaranteed taller than the window, to establish the
+  // window's safe-area state before the first real capture. Crucially it renders
+  // through the strategy's own `a11yWrapper`: the safe-area collapse this warms past
+  // happens in the accessibility capture path (AccessibilitySnapshotView), so warming
+  // without that wrapper leaves a11y previews at the collapsed height.
+  @MainActor private func warmUp(completion: @escaping () -> Void) {
+    let dummy = WarmUpScrollView(contentHeight: max(window.bounds.height, 1) * 2)
+    let controller = dummy.makeExpandingView(layout: .device, window: window)
+    dummy.snapshot(
+      layout: .device,
+      controller: controller,
+      window: window,
+      async: false,
+      a11yWrapper: a11yWrapper) { _ in
+        completion()
+      }
+  }
+}
+
+// A scroll view whose content is taller than its frame, used only to warm up the
+// render window (see `UIKitRenderingStrategy.warmUp`). Mirrors the `.always` content
+// inset of typical UIKit-hosted previews so the warm-up reproduces the first-expansion
+// safe-area collapse it exists to pre-empt.
+private struct WarmUpScrollView: UIViewRepresentable {
+  let contentHeight: CGFloat
+
+  func makeUIView(context: Context) -> UIScrollView {
+    let scrollView = UIScrollView()
+    scrollView.contentInsetAdjustmentBehavior = .always
+    let content = UIView()
+    content.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.addSubview(content)
+    NSLayoutConstraint.activate([
+      content.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+      content.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+      content.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+      content.heightAnchor.constraint(equalToConstant: contentHeight),
+    ])
+    return scrollView
+  }
+
+  func updateUIView(_ uiView: UIScrollView, context: Context) {}
 }
 #endif
