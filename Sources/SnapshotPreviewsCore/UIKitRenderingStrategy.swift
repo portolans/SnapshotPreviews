@@ -56,7 +56,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   //     skip the warm-up and capture against an un-warmed window.
   private var warmedOrientations: Set<UIInterfaceOrientation> = []
   private var isWarmingUp = false
-  private var queuedRenders: [() -> Void] = []
+  private var queuedRenders: [(preview: SnapshotPreviewsCore.Preview, completion: (SnapshotResult) -> Void)] = []
 
   @MainActor
   public func render(
@@ -142,18 +142,28 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     }
     // Defer the real render until the (asynchronous) warm-up settles, so neither this
     // caller nor a concurrent one captures against an un-warmed window.
-    queuedRenders.append { [weak self] in
-      self?.performRender(preview: preview, completion: completion)
-    }
+    queuedRenders.append((preview, completion))
     guard !isWarmingUp else { return }
     isWarmingUp = true
     warmUp { [weak self] in
       guard let self else { return }
       self.warmedOrientations.insert(orientation)
       self.isWarmingUp = false
-      let queued = self.queuedRenders
-      self.queuedRenders = []
-      queued.forEach { $0() }
+      self.drainQueuedRenders()
+    }
+  }
+
+  // Drains deferred renders one at a time, re-routing each back through
+  // `warmThenRender` so it re-checks its own orientation (and triggers another warm-up
+  // if it targets an orientation the finished warm-up didn't cover). Serial — the next
+  // starts only after the previous capture's completion fires — so back-to-back renders
+  // never replace the shared window's `rootViewController` mid-capture.
+  @MainActor private func drainQueuedRenders() {
+    guard !queuedRenders.isEmpty else { return }
+    let next = queuedRenders.removeFirst()
+    warmThenRender(preview: next.preview) { [weak self] result in
+      next.completion(result)
+      self?.drainQueuedRenders()
     }
   }
 
