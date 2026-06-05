@@ -134,7 +134,11 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     completion: @escaping (SnapshotResult) -> Void
   ) {
     let orientation = windowScene?.interfaceOrientation ?? .portrait
-    guard !warmedOrientations.contains(orientation) else {
+    // The collapse only occurs in the accessibility capture path, so only a11y
+    // strategies need warming. A plain `SnapshotTest` strategy (nil `a11yWrapper`)
+    // would gain nothing from a warm-up — just an extra render against the caller's
+    // per-render timeout — so skip it there.
+    guard a11yWrapper != nil, !warmedOrientations.contains(orientation) else {
       performRender(preview: preview, completion: completion)
       return
     }
