@@ -7,14 +7,162 @@
 
 import Foundation
 @_implementationOnly import SnapshotPreviewsCore
+import enum SwiftUI.ColorScheme
 import XCTest
+
+extension ColorScheme {
+  var stringValue: String? {
+    switch self {
+    case .light:
+      return "light"
+    case .dark:
+      return "dark"
+    @unknown default:
+      return nil
+    }
+  }
+}
 
 /// A test class for generating snapshots of Xcode previews.
 ///
 /// This class is designed to discover SwiftUI previews, render them, and generate snapshot images for testing purposes.
 /// It provides mechanisms for filtering previews and supports different rendering strategies based on the platform.
 open class SnapshotTest: PreviewBaseTest, PreviewFilters {
-  
+
+  private struct FileNameKey: Hashable {
+    let typeName: String
+    let previewIndex: Int
+  }
+
+  struct FileNameResolver {
+    private typealias PreviewGroup = String
+    private typealias PreviewDisplayName = String
+
+    private struct DuplicateKey: Hashable {
+      let group: PreviewGroup
+      let displayName: PreviewDisplayName
+    }
+
+    private struct PreviewMeta {
+      let previewType: SnapshotPreviewsCore.PreviewType
+      let group: PreviewGroup
+      let prefix: String
+    }
+
+    private let rawBaseFileNameByKey: [FileNameKey: String]
+
+    init(previews: [SnapshotPreviewsCore.PreviewType]) {
+      let metas = previews.map { previewType in
+        PreviewMeta(
+          previewType: previewType,
+          group: SnapshotCIExportCoordinator.canonicalGroup(for: previewType),
+          prefix: Self.fileNamePrefix(typeDisplayName: previewType.displayName, fileId: previewType.fileID)
+        )
+      }
+
+      // First pass: count previews sharing each (group, displayName) to detect
+      // duplicates that need disambiguation.
+      var displayNameCountByGroup: [PreviewGroup: [PreviewDisplayName: Int]] = [:]
+      for meta in metas {
+        for preview in meta.previewType.previews {
+          guard let displayName = preview.displayName, !displayName.isEmpty else { continue }
+          displayNameCountByGroup[meta.group, default: [:]][displayName, default: 0] += 1
+        }
+      }
+
+      // Second pass: assign a 1-based ordinal to each duplicate occurrence and
+      // build the raw base file name for every preview.
+      var nextOrdinalByKey: [DuplicateKey: Int] = [:]
+      var rawBaseFileNameByKey: [FileNameKey: String] = [:]
+
+      for meta in metas {
+        let displayNameCounts = displayNameCountByGroup[meta.group] ?? [:]
+
+        for (previewIndex, preview) in meta.previewType.previews.enumerated() {
+          let occurrenceCount = preview.displayName.flatMap { displayNameCounts[$0] } ?? 0
+
+          var ordinal: Int?
+          if let displayName = preview.displayName, occurrenceCount > 1 {
+            let ordinalKey = DuplicateKey(group: meta.group, displayName: displayName)
+            let next = nextOrdinalByKey[ordinalKey, default: 1]
+            nextOrdinalByKey[ordinalKey] = next + 1
+            ordinal = next
+          }
+
+          let component = Self.fileNameComponent(
+            previewDisplayName: preview.displayName,
+            previewIndex: previewIndex,
+            fileId: meta.previewType.fileID,
+            line: meta.previewType.line,
+            displayNameOccurrenceCount: occurrenceCount,
+            duplicateDisplayNameOrdinal: ordinal
+          )
+
+          let key = FileNameKey(typeName: meta.previewType.typeName, previewIndex: previewIndex)
+          rawBaseFileNameByKey[key] = "\(meta.prefix)_\(component)"
+        }
+      }
+
+      self.rawBaseFileNameByKey = rawBaseFileNameByKey
+    }
+
+    func rawBaseFileName(typeName: String, previewIndex: Int) -> String? {
+      rawBaseFileNameByKey[FileNameKey(typeName: typeName, previewIndex: previewIndex)]
+    }
+
+    static func rawBaseFileName(
+      typeDisplayName: String,
+      fileId: String?,
+      previewDisplayName: String?,
+      previewIndex: Int,
+      line: Int?,
+      displayNameOccurrenceCount: Int,
+      duplicateDisplayNameOrdinal: Int?
+    ) -> String {
+      let prefix = fileNamePrefix(typeDisplayName: typeDisplayName, fileId: fileId)
+      let component = fileNameComponent(
+        previewDisplayName: previewDisplayName,
+        previewIndex: previewIndex,
+        fileId: fileId,
+        line: line,
+        displayNameOccurrenceCount: displayNameOccurrenceCount,
+        duplicateDisplayNameOrdinal: duplicateDisplayNameOrdinal
+      )
+      return "\(prefix)_\(component)"
+    }
+
+    private static func fileNamePrefix(typeDisplayName: String, fileId: String?) -> String {
+      if let fileId, !fileId.isEmpty {
+        return fileId
+      }
+      return typeDisplayName
+    }
+
+    private static func fileNameComponent(
+      previewDisplayName: String?,
+      previewIndex: Int,
+      fileId: String?,
+      line: Int?,
+      displayNameOccurrenceCount: Int,
+      duplicateDisplayNameOrdinal: Int?
+    ) -> String {
+      if let previewDisplayName, !previewDisplayName.isEmpty {
+        if displayNameOccurrenceCount <= 1 {
+          return previewDisplayName
+        }
+        if let duplicateDisplayNameOrdinal {
+          return "\(previewDisplayName)_\(duplicateDisplayNameOrdinal)"
+        }
+      }
+
+      if fileId != nil, let line {
+        return "line-\(line)"
+      }
+
+      return String(previewIndex)
+    }
+  }
+
   /// Returns an optional array of preview names to be included in the snapshot testing. This also supports Regex format.
   ///
   /// Override this method to specify which previews should be included in the snapshot test.
@@ -30,7 +178,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   open class func excludedSnapshotPreviews() -> [String]? {
     nil
   }
-  
+
   #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
   open class func setupA11y() -> ((UIViewController, UIWindow, PreviewLayout) -> UIView)? {
     return nil
@@ -61,24 +209,17 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// Cached rendering strategy per concrete subclass. Two `SnapshotTest` subclasses in the same bundle each return their own `setupA11y()`,
   /// so the cache must key by class — otherwise whichever class runs first wins the cache and the other class silently reuses its strategy.
   private static var renderingStrategies: [ObjectIdentifier: RenderingStrategy] = [:]
+  @MainActor private static var ciExportCoordinator: SnapshotCIExportCoordinator?
 
   static private var previews: [SnapshotPreviewsCore.PreviewType] = []
-  
-  static private var previewCountForFileId: [String: Int] = [:]
+  static private var fileNameResolver = FileNameResolver(previews: [])
 
-  /// Discovers all relevant previews based on inclusion and exclusion filters. Subclasses should NOT override this method.
-  ///
-  /// This method uses `FindPreviews` to locate all previews, applying any specified filters.
-  /// - Returns: An array of `DiscoveredPreview` objects representing the found previews.
   @MainActor
   override class func discoverPreviews() -> [DiscoveredPreview] {
+    ciExportCoordinator = SnapshotCIExportCoordinator.createFromEnvironment()
+
     previews = FindPreviews.findPreviews(included: Self.snapshotPreviews(), excluded: Self.excludedSnapshotPreviews())
-    
-    for preview in previews {
-        guard let fileId = preview.fileID else { continue }
-        previewCountForFileId[fileId, default: 0] += 1
-    }
-    
+    fileNameResolver = FileNameResolver(previews: previews)
     return previews.map { DiscoveredPreview.from(previewType: $0) }
   }
 
@@ -90,26 +231,28 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// - Parameter discoveredPreview: A `DiscoveredPreviewAndIndex` object representing the preview to be tested.
   @MainActor
   override func testPreview(_ discoveredPreview: DiscoveredPreviewAndIndex) {
-    let previewType = Self.previews.first { $0.typeName == discoveredPreview.preview.typeName }
-    guard let previewType = previewType else {
+    guard let previewType = Self.previews.first(where: { $0.typeName == discoveredPreview.preview.typeName }) else {
       XCTFail("Preview type not found")
       return
     }
 
     let preview = previewType.previews[discoveredPreview.index]
-    var result: SnapshotResult? = nil
+
+    // Lazily create the rendering strategy
     let strategy: RenderingStrategy
     let strategyKey = ObjectIdentifier(Self.self)
     if let cached = Self.renderingStrategies[strategyKey] {
       strategy = cached
     } else {
-#if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
+      #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
       strategy = Self.makeRenderingStrategy(a11y: Self.setupA11y())
       #else
       strategy = Self.makeRenderingStrategy()
       #endif
       Self.renderingStrategies[strategyKey] = strategy
     }
+
+    var result: SnapshotResult? = nil
     let expectation = XCTestExpectation()
     strategy.render(preview: preview) { snapshotResult in
       result = snapshotResult
@@ -121,17 +264,42 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       return
     }
 
-    var typeFileName = previewType.displayName
-    if let fileId = previewType.fileID, let lineNumber = previewType.line {
-      typeFileName = Self.previewCountForFileId[fileId]! > 1 ? "\(fileId):\(lineNumber)" : fileId
+    guard let rawBaseFileName = Self.fileNameResolver.rawBaseFileName(
+      typeName: previewType.typeName,
+      previewIndex: discoveredPreview.index
+    ) else {
+      XCTFail("Preview file name not found")
+      return
     }
-    do {
-      let attachment = try XCTAttachment(image: result.image.get())
-      attachment.name = "\(typeFileName)_\(preview.displayName ?? String(discoveredPreview.index))"
-      attachment.lifetime = .keepAlways
-      add(attachment)
-    } catch {
-      XCTFail("Error \(error)")
+
+    let baseFileName = SnapshotCIExportCoordinator.sanitize(rawBaseFileName)
+    if let coordinator = Self.ciExportCoordinator {
+      let colorSchemeValue = result.colorScheme.flatMap { $0.stringValue }
+      let context = SnapshotContext(
+        baseFileName: baseFileName,
+        testName: name,
+        typeName: previewType.typeName,
+        typeDisplayName: previewType.displayName,
+        fileId: previewType.fileID,
+        line: previewType.line,
+        previewDisplayName: preview.displayName,
+        previewIndex: discoveredPreview.index,
+        orientation: preview.orientation.id,
+        simulatorDeviceName: ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"],
+        simulatorModelIdentifier: ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],
+        diffThreshold: SnapshotCIExportCoordinator.diffThreshold(for: result.precision),
+        accessibilityEnabled: result.accessibilityEnabled,
+        colorScheme: colorSchemeValue)
+      coordinator.enqueueExport(result: result, context: context)
+    } else {
+      do {
+        let attachment = try XCTAttachment(image: result.image.get())
+        attachment.name = baseFileName
+        attachment.lifetime = .keepAlways
+        add(attachment)
+      } catch {
+        XCTFail("Error \(error)")
+      }
     }
   }
 }
