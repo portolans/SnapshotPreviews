@@ -34,7 +34,32 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   /// hosted (and alive) until the next render replaces it. Swap in an empty root now so a
   /// deallocation check can run before the next preview.
   @MainActor public func releaseRenderedPreview() {
+    dismantleHostedPreview()
     window.rootViewController = UIViewController()
+  }
+
+  /// Gives the hosting controller one last SwiftUI update with nothing in it before it is
+  /// discarded. SwiftUI on iOS 18 keeps a hosting view's graph, and everything the graph owns,
+  /// alive until its next update; a controller that is simply dropped from the window never gets
+  /// one, so without this the previewed screen looks retained long after the render.
+  @MainActor private func dismantleHostedPreview() {
+    guard let root = window.rootViewController, let expanding = Self.expandingViewController(under: root) else { return }
+    // The render already reported; a second settle from this update must not fire the callback.
+    expanding.expansionSettled = nil
+    expanding.rootView = EmergeModifierView(wrapped: EmptyView())
+    expanding.view.layoutIfNeeded()
+  }
+
+  private static func expandingViewController(under viewController: UIViewController) -> ExpandingViewController? {
+    if let expanding = viewController as? ExpandingViewController {
+      return expanding
+    }
+    for child in viewController.children {
+      if let expanding = expandingViewController(under: child) {
+        return expanding
+      }
+    }
+    return nil
   }
 
   private let window: UIWindow
@@ -121,6 +146,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     completion: @escaping (SnapshotResult) -> Void
   ) {
     UIView.setAnimationsEnabled(false)
+    dismantleHostedPreview()
     let view = preview.view()
     let controller = view.makeExpandingView(layout: preview.layout, window: window)
     view.snapshot(
