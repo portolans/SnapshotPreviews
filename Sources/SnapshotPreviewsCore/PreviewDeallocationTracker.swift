@@ -41,9 +41,8 @@ public enum PreviewDeallocationTracker {
       controllers.compactMap(\.viewController)
     }
 
-    /// Whether the harness's own hosting controller for this preview is still alive. When it is,
-    /// the platform is holding the whole render, so a surviving preview controller says nothing
-    /// about the screen.
+    /// Whether the harness's own hosting controller for this preview is still alive. A leaked
+    /// screen can keep it alive, so this is diagnostic context for a report, not a verdict.
     public var hostIsAlive: Bool {
       host?.viewController != nil
     }
@@ -67,10 +66,9 @@ public enum PreviewDeallocationTracker {
     current
   }
 
-  /// Previews whose controllers were still alive one render later for a reason that needs more
-  /// time to rule out: the harness's own hosting controller had not been released, or the screen
-  /// is itself a `UIHostingController`, which SwiftUI dismantles on its own schedule. Judge these
-  /// once at the end, after a bounded wait.
+  /// Previews whose screen is itself a `UIHostingController`, which SwiftUI dismantles on its own
+  /// schedule, so one render later is too soon to judge. Judge these once at the end, after a
+  /// bounded wait.
   public static var deferredPreviews: [RenderedPreview] {
     deferred
   }
