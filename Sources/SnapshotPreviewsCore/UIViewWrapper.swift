@@ -18,7 +18,9 @@ struct UIViewControllerWrapper: UIViewControllerRepresentable {
   }
 
   func makeUIViewController(context: Context) -> UIViewController {
-    builder()
+    let viewController = builder()
+    PreviewDeallocationTracker.track(viewController)
+    return viewController
   }
 
   func updateUIViewController(_ uiViewController: UIViewController, context: Context) { }

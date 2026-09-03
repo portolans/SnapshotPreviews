@@ -35,6 +35,15 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   open class func setupA11y() -> ((UIViewController, UIWindow, PreviewLayout) -> UIView)? {
     return nil
   }
+
+  /// Whether each preview's view controllers must deallocate once the preview is torn down.
+  ///
+  /// On by default: a view controller a preview built that is still alive after the render is the
+  /// signature of a retain cycle inside that screen, and fails the preview's test. Override to
+  /// return `false` to opt a suite out.
+  open class func checksPreviewDeallocation() -> Bool {
+    true
+  }
   #endif
 
   /// Determines the appropriate rendering strategy based on the current platform and OS version.
@@ -110,6 +119,14 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       #endif
       Self.renderingStrategies[strategyKey] = strategy
     }
+    var typeFileName = previewType.displayName
+    if let fileId = previewType.fileID, let lineNumber = previewType.line {
+      typeFileName = Self.previewCountForFileId[fileId]! > 1 ? "\(fileId):\(lineNumber)" : fileId
+    }
+    let previewName = "\(typeFileName)_\(preview.displayName ?? String(discoveredPreview.index))"
+    #if canImport(UIKit) && !os(watchOS)
+    PreviewDeallocationTracker.beginPreview(name: previewName, fileID: previewType.fileID, line: previewType.line)
+    #endif
     let expectation = XCTestExpectation()
     strategy.render(preview: preview) { snapshotResult in
       result = snapshotResult
@@ -121,17 +138,94 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       return
     }
 
-    var typeFileName = previewType.displayName
-    if let fileId = previewType.fileID, let lineNumber = previewType.line {
-      typeFileName = Self.previewCountForFileId[fileId]! > 1 ? "\(fileId):\(lineNumber)" : fileId
-    }
     do {
       let attachment = try XCTAttachment(image: result.image.get())
-      attachment.name = "\(typeFileName)_\(preview.displayName ?? String(discoveredPreview.index))"
+      attachment.name = previewName
       attachment.lifetime = .keepAlways
       add(attachment)
     } catch {
       XCTFail("Error \(error)")
     }
+
+    #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
+    if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview, previous.wasReleased {
+      // This render replaced the previous preview in the window and drained what UIKit
+      // autoreleased in the process, so its controllers have had a whole render cycle to go away
+      // and a healthy preview costs no wait at all. One still alive gets a bounded moment for
+      // whatever is finishing up (SwiftUI dismantling a hosting controller, a container's
+      // transition completing) before it is reported; a real cycle never lets go. (A render that
+      // failed before replacing the window's root leaves the previous preview hosted, and
+      // unjudged.)
+      let survivors = Self.awaitRelease(of: previous)
+      if !survivors.isEmpty {
+        recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, placement: previous.survivorPlacement, hostIsAlive: previous.hostIsAlive)
+      }
+    }
+    #endif
   }
+
+  #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
+  open override class func setUp() {
+    super.setUp()
+    MainActor.assumeIsolated { PreviewDeallocationTracker.reset() }
+  }
+
+  /// Judges the last preview the class rendered, which nothing came after: releases its render,
+  /// then reports what is still alive after the same bounded wait every survivor gets.
+  open override class func tearDown() {
+    if checksPreviewDeallocation() {
+      MainActor.assumeIsolated {
+        renderingStrategies[ObjectIdentifier(Self.self)]?.releaseRenderedPreview()
+        if let current = PreviewDeallocationTracker.currentPreview, current.wasReleased {
+          let survivors = awaitRelease(of: current)
+          if let description = leakDescription(previewNamed: current.name, survivors: survivors, placement: current.survivorPlacement, hostIsAlive: current.hostIsAlive) {
+            // Recorded outside a test case, so carry the #Preview's file and line in the message
+            // where tooling can still find them.
+            let location = [current.fileID, current.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
+            XCTFail(location.isEmpty ? description : "\(location): \(description)")
+          }
+        }
+        PreviewDeallocationTracker.reset()
+      }
+    }
+    super.tearDown()
+  }
+
+  /// The preview's controllers still alive after a bounded wait, which starts only if any is alive.
+  /// Waits through XCTest rather than by spinning the run loop: under parallel testing a raw
+  /// `RunLoop.run` inside the harness deadlocked the test host.
+  @MainActor
+  private static func awaitRelease(of preview: PreviewDeallocationTracker.RenderedPreview) -> [UIViewController] {
+    guard !preview.survivingViewControllers.isEmpty else { return [] }
+    let released = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in MainActor.assumeIsolated { preview.survivingViewControllers.isEmpty } },
+      object: nil
+    )
+    _ = XCTWaiter().wait(for: [released], timeout: 2)
+    return preview.survivingViewControllers
+  }
+
+  // These helpers take plain values rather than tracker types: SnapshotPreviewsCore is an
+  // implementation-only import, and a subclass in another module cannot load a member whose
+  // signature mentions one of its types.
+  @MainActor
+  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController], placement: String, hostIsAlive: Bool) {
+    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors, placement: placement, hostIsAlive: hostIsAlive) else { return }
+    var issue = XCTIssue(type: .assertionFailure, compactDescription: description)
+    // Attribute the failure to the #Preview so it lands on the screen's own file rather than in
+    // the harness.
+    if let fileID, let line {
+      issue.sourceCodeContext = XCTSourceCodeContext(location: XCTSourceCodeLocation(filePath: fileID, lineNumber: line))
+    }
+    record(issue)
+  }
+
+  @MainActor
+  private static func leakDescription(previewNamed name: String, survivors: [UIViewController], placement: String, hostIsAlive: Bool) -> String? {
+    guard !survivors.isEmpty else { return nil }
+    let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
+    let hostNote = hostIsAlive ? " The harness's own hosting controller is also still alive, which a leaked screen can cause." : ""
+    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer. [\(placement)]\(hostNote)"
+  }
+  #endif
 }

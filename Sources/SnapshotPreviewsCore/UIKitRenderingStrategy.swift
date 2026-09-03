@@ -30,6 +30,32 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     window.windowScene
   }
 
+  /// The window is reused across a test class's whole preview set, so the rendered preview stays
+  /// hosted (and alive) until the next render replaces it. Swap in an empty root now so a
+  /// deallocation check can run before the next preview.
+  @MainActor public func releaseRenderedPreview() {
+    // UIKit autoreleases the outgoing root tree while swapping it out. From a test method's own
+    // stack that lands in the method's pool, which drains only when the method returns, so a
+    // check that runs later in the same method would still see the tree alive. Drain here.
+    autoreleasepool {
+      dismantleHostedPreview()
+      window.rootViewController = UIViewController()
+    }
+  }
+
+  /// Stops the outgoing render's settle callback from firing again and tells the tracker that
+  /// this render is being discarded, so its preview may be judged.
+  @MainActor private func dismantleHostedPreview() {
+    guard let root = window.rootViewController, let expanding = Self.expandingViewController(under: root) else { return }
+    expanding.expansionSettled = nil
+    PreviewDeallocationTracker.hostDismantled(expanding)
+  }
+
+  private static func expandingViewController(under viewController: UIViewController) -> ExpandingViewController? {
+    (viewController as? ExpandingViewController)
+      ?? viewController.children.lazy.compactMap(expandingViewController(under:)).first
+  }
+
   private let window: UIWindow
   private let a11yWrapper: ((UIViewController, UIWindow, PreviewLayout) -> UIView)?
   private var geometryUpdateError: Error?
@@ -114,8 +140,11 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     completion: @escaping (SnapshotResult) -> Void
   ) {
     UIView.setAnimationsEnabled(false)
+    // Same pool reasoning as releaseRenderedPreview(): the previous render's tree is autoreleased
+    // while this render replaces it, and must not outlive this call.
+    autoreleasepool { dismantleHostedPreview() }
     let view = preview.view()
-    let controller = view.makeExpandingView(layout: preview.layout, window: window)
+    let controller = autoreleasepool { view.makeExpandingView(layout: preview.layout, window: window) }
     view.snapshot(
       layout: preview.layout,
       controller: controller,
@@ -159,7 +188,10 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   // without that wrapper leaves a11y previews at the collapsed height.
   @MainActor private func warmUp(completion: @escaping () -> Void) {
     let dummy = WarmUpScrollView(contentHeight: max(window.bounds.height, 1) * 2)
-    let controller = dummy.makeExpandingView(layout: .device, window: window)
+    // The warm-up replaces the window root like a render does, with the same autorelease
+    // consequences (see performRender).
+    autoreleasepool { dismantleHostedPreview() }
+    let controller = autoreleasepool { dummy.makeExpandingView(layout: .device, window: window) }
     dummy.snapshot(
       layout: .device,
       controller: controller,
