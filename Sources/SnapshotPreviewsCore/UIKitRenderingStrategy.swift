@@ -39,9 +39,15 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   }
 
   /// Gives the hosting controller one last SwiftUI update with nothing in it before it is
-  /// discarded. SwiftUI on iOS 18 keeps a hosting view's graph, and everything the graph owns,
-  /// alive until its next update; a controller that is simply dropped from the window never gets
-  /// one, so without this the previewed screen looks retained long after the render.
+  /// discarded.
+  ///
+  /// Workaround for iOS 18.0 and 18.1: SwiftUI there keeps a hosting view's graph, and everything
+  /// the graph owns, alive until the graph's next update, so a controller that is simply dropped
+  /// from the window never releases the screen it hosted and the previewed controller looks
+  /// retained long after the render. Apple documents the same deferral for `@StateObject` on
+  /// iOS 18.0/18.1, with "trigger another update" as the workaround:
+  /// https://developer.apple.com/forums/thread/765719. iOS 26 releases without this; it is kept
+  /// unconditional because it is cheap and harmless there.
   @MainActor private func dismantleHostedPreview() {
     guard let root = window.rootViewController, let expanding = Self.expandingViewController(under: root) else { return }
     // The render already reported; a second settle from this update must not fire the callback.
