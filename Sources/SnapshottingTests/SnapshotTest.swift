@@ -149,11 +149,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
 
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
     if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview {
-      // This render replaced the previous preview in the window, after giving its hosting
-      // controller a last empty update, so its controllers have had a whole render cycle to go
-      // away. A plain UIKit controller still alive now is retained by its own graph. A screen that
-      // is itself a UIHostingController is dismantled by SwiftUI on its own schedule, so it is
-      // judged once at tearDown instead.
+      // This render replaced the previous preview in the window and drained what UIKit
+      // autoreleased in the process, so its controllers have had a whole render cycle to go away.
+      // A plain UIKit controller still alive now is retained by its own graph. A screen that is
+      // itself a UIHostingController is dismantled by SwiftUI on its own schedule, so it is judged
+      // once at tearDown instead.
       let survivors = previous.survivingViewControllers
       if !survivors.isEmpty {
         if survivors.contains(where: PreviewDeallocationTracker.isHostingController) {
