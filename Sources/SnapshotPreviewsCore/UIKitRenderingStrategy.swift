@@ -34,8 +34,13 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   /// hosted (and alive) until the next render replaces it. Swap in an empty root now so a
   /// deallocation check can run before the next preview.
   @MainActor public func releaseRenderedPreview() {
-    dismantleHostedPreview()
-    window.rootViewController = UIViewController()
+    // UIKit autoreleases the outgoing root tree while swapping it out. From a test method's own
+    // stack that lands in the method's pool, which drains only when the method returns, so a
+    // check that runs later in the same method would still see the tree alive. Drain here.
+    autoreleasepool {
+      dismantleHostedPreview()
+      window.rootViewController = UIViewController()
+    }
   }
 
   /// Gives the hosting controller one last SwiftUI update with nothing in it before it is
@@ -153,9 +158,11 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     completion: @escaping (SnapshotResult) -> Void
   ) {
     UIView.setAnimationsEnabled(false)
-    dismantleHostedPreview()
+    // Same pool reasoning as releaseRenderedPreview(): the previous render's tree is autoreleased
+    // while this render replaces it, and must not outlive this call.
+    autoreleasepool { dismantleHostedPreview() }
     let view = preview.view()
-    let controller = view.makeExpandingView(layout: preview.layout, window: window)
+    let controller = autoreleasepool { view.makeExpandingView(layout: preview.layout, window: window) }
     view.snapshot(
       layout: preview.layout,
       controller: controller,
