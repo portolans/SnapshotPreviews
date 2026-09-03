@@ -150,12 +150,15 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
     if Self.checksPreviewDeallocation() {
       strategy.releaseRenderedPreview()
-      // UIKit releases a just-unhosted view controller's last references from the main queue,
-      // so let queued work run before judging.
-      let drained = XCTestExpectation(description: "main queue drained after releasing the preview")
-      DispatchQueue.main.async { drained.fulfill() }
-      wait(for: [drained], timeout: 5)
-      let survivors = PreviewDeallocationTracker.survivingViewControllers()
+      // UIKit lets go of a just-unhosted view controller over a few run-loop turns, and on
+      // iOS 18 that takes longer than one main-queue hop. Keep the run loop turning until
+      // the controllers are gone, bounded so a real leak still fails promptly.
+      let deadline = Date(timeIntervalSinceNow: 2)
+      var survivors = PreviewDeallocationTracker.survivingViewControllers()
+      while !survivors.isEmpty, Date() < deadline {
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        survivors = PreviewDeallocationTracker.survivingViewControllers()
+      }
       if !survivors.isEmpty {
         let typeNames = survivors.map { String(describing: type(of: $0)) }.joined(separator: ", ")
         XCTFail("Preview \(previewName) leaked \(typeNames): still alive after the preview was torn down, so something in its own graph retains it.")
