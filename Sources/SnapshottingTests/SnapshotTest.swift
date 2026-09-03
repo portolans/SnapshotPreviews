@@ -173,14 +173,20 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// Releases the last render, waits a bounded moment once, then reports what is still alive.
   open override class func tearDown() {
     if checksPreviewDeallocation() {
-      MainActor.assumeIsolated {
+      // XCTest's main run loop runs class tearDown, so the tracker reads may assume the main actor.
+      // The wait itself must not run inside that assumption: XCTest treats a synchronous wait held
+      // from an actor context as a stall and aborts the host once the wait outlives its timeout,
+      // which is precisely what a real leak makes it do.
+      let previews = MainActor.assumeIsolated { () -> [PreviewDeallocationTracker.RenderedPreview] in
         renderingStrategies[ObjectIdentifier(Self.self)]?.releaseRenderedPreview()
         var previews = PreviewDeallocationTracker.deferredPreviews
         if let current = PreviewDeallocationTracker.currentPreview {
           previews.append(current)
         }
-        previews = previews.filter(\.wasReleased)
-        awaitRelease(of: previews)
+        return previews.filter(\.wasReleased)
+      }
+      awaitRelease(of: previews)
+      MainActor.assumeIsolated {
         for preview in previews {
           if let description = leakDescription(previewNamed: preview.name, survivors: preview.survivingViewControllers, placement: preview.survivorPlacement, hostIsAlive: preview.hostIsAlive) {
             // Recorded outside a test case, so carry the #Preview's file and line in the message
@@ -196,15 +202,13 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   /// Waits a bounded moment for the previews' controllers to go away, and only if any is alive.
-  /// Runs outside any test, through XCTest's waiter rather than a raw run-loop spin, which is the
-  /// one form of waiting that has not hung the test host under parallel testing.
-  @MainActor
+  /// Runs outside any test and outside any actor assumption, through XCTest's waiter rather than a
+  /// raw run-loop spin (which deadlocked the host under parallel testing). The predicate is
+  /// evaluated on the main run loop, where the tracker lives.
   private static func awaitRelease(of previews: [PreviewDeallocationTracker.RenderedPreview]) {
-    guard previews.contains(where: { !$0.survivingViewControllers.isEmpty }) else { return }
-    let released = XCTNSPredicateExpectation(
-      predicate: NSPredicate { _, _ in MainActor.assumeIsolated { previews.allSatisfy { $0.survivingViewControllers.isEmpty } } },
-      object: nil
-    )
+    let anyAlive = { MainActor.assumeIsolated { previews.contains { !$0.survivingViewControllers.isEmpty } } }
+    guard anyAlive() else { return }
+    let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !anyAlive() }, object: nil)
     _ = XCTWaiter().wait(for: [released], timeout: 2)
   }
 
