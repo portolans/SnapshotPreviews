@@ -30,6 +30,13 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     window.windowScene
   }
 
+  /// The window is reused across a test class's whole preview set, so the rendered preview stays
+  /// hosted (and alive) until the next render replaces it. Swap in an empty root now so a
+  /// deallocation check can run before the next preview.
+  @MainActor public func releaseRenderedPreview() {
+    window.rootViewController = UIViewController()
+  }
+
   private let window: UIWindow
   private let a11yWrapper: ((UIViewController, UIWindow, PreviewLayout) -> UIView)?
   private var geometryUpdateError: Error?

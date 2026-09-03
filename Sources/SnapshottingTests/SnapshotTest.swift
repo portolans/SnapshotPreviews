@@ -35,6 +35,15 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   open class func setupA11y() -> ((UIViewController, UIWindow, PreviewLayout) -> UIView)? {
     return nil
   }
+
+  /// Whether each preview's view controllers must deallocate once the preview is torn down.
+  ///
+  /// Override to return `true` to fail a preview's test when a view controller it built is still
+  /// alive after the render — the signature of a retain cycle inside that screen. Off by default so
+  /// existing suites keep their behavior until they opt in.
+  open class func checksPreviewDeallocation() -> Bool {
+    false
+  }
   #endif
 
   /// Determines the appropriate rendering strategy based on the current platform and OS version.
@@ -110,6 +119,9 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       #endif
       Self.renderingStrategies[strategyKey] = strategy
     }
+    #if canImport(UIKit) && !os(watchOS)
+    PreviewDeallocationTracker.reset()
+    #endif
     let expectation = XCTestExpectation()
     strategy.render(preview: preview) { snapshotResult in
       result = snapshotResult
@@ -125,13 +137,30 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     if let fileId = previewType.fileID, let lineNumber = previewType.line {
       typeFileName = Self.previewCountForFileId[fileId]! > 1 ? "\(fileId):\(lineNumber)" : fileId
     }
+    let previewName = "\(typeFileName)_\(preview.displayName ?? String(discoveredPreview.index))"
     do {
       let attachment = try XCTAttachment(image: result.image.get())
-      attachment.name = "\(typeFileName)_\(preview.displayName ?? String(discoveredPreview.index))"
+      attachment.name = previewName
       attachment.lifetime = .keepAlways
       add(attachment)
     } catch {
       XCTFail("Error \(error)")
     }
+
+    #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
+    if Self.checksPreviewDeallocation() {
+      strategy.releaseRenderedPreview()
+      // UIKit can keep a just-unhosted view controller alive for a run-loop turn, so drain a
+      // few turns before judging.
+      for _ in 0..<3 {
+        _ = RunLoop.main.run(mode: .default, before: .distantPast)
+      }
+      let survivors = PreviewDeallocationTracker.survivingViewControllers()
+      if !survivors.isEmpty {
+        let typeNames = survivors.map { String(describing: type(of: $0)) }.joined(separator: ", ")
+        XCTFail("Preview \(previewName) leaked \(typeNames): still alive after the preview was torn down, so something in its own graph retains it.")
+      }
+    }
+    #endif
   }
 }

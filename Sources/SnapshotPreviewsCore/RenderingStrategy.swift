@@ -49,6 +49,10 @@ public protocol RenderingStrategy {
   @MainActor func render(
     preview: SnapshotPreviewsCore.Preview,
     completion: @escaping (SnapshotResult) -> Void)
+
+  /// Drops the strategy's reference to the most recently rendered preview so its view controllers
+  /// can deallocate. Strategies that keep no reference between renders need not implement this.
+  @MainActor func releaseRenderedPreview()
 }
 
 private let testHandler: NSObject.Type? = NSClassFromString("EMGTestHandler") as? NSObject.Type
@@ -57,5 +61,7 @@ extension RenderingStrategy {
   static func setup() {
     testHandler?.perform(NSSelectorFromString("setup"))
   }
+
+  @MainActor public func releaseRenderedPreview() {}
 }
 
