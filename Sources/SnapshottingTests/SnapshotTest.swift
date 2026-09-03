@@ -150,11 +150,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
     if Self.checksPreviewDeallocation() {
       strategy.releaseRenderedPreview()
-      // UIKit can keep a just-unhosted view controller alive for a run-loop turn, so drain a
-      // few turns before judging.
-      for _ in 0..<3 {
-        _ = RunLoop.main.run(mode: .default, before: .distantPast)
-      }
+      // UIKit releases a just-unhosted view controller's last references from the main queue,
+      // so let queued work run before judging.
+      let drained = XCTestExpectation(description: "main queue drained after releasing the preview")
+      DispatchQueue.main.async { drained.fulfill() }
+      wait(for: [drained], timeout: 5)
       let survivors = PreviewDeallocationTracker.survivingViewControllers()
       if !survivors.isEmpty {
         let typeNames = survivors.map { String(describing: type(of: $0)) }.joined(separator: ", ")
