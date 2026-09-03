@@ -54,14 +54,21 @@ public enum PreviewDeallocationTracker {
     }
 
     /// Where each surviving controller still sits, for a failure report: its parent, its view's
-    /// superview, and whether that view is still in a window.
+    /// superview, and whether that view is still in a window. The harness's own hosting
+    /// controller is described the same way when it is still alive.
     public var survivorPlacement: String {
-      survivingViewControllers.map { viewController in
-        let parent = viewController.parent.map { String(describing: type(of: $0)) } ?? "nil"
-        let superview = viewController.viewIfLoaded?.superview.map { String(describing: type(of: $0)) } ?? "nil"
-        let inWindow = viewController.viewIfLoaded?.window != nil
-        return "\(type(of: viewController)): parent=\(parent), superview=\(superview), inWindow=\(inWindow)"
-      }.joined(separator: "; ")
+      var placements = survivingViewControllers.map(Self.placement(of:))
+      if let host = host?.viewController {
+        placements.append("host " + Self.placement(of: host) + ", children=\(host.children.map { String(describing: type(of: $0)) })")
+      }
+      return placements.joined(separator: "; ")
+    }
+
+    private static func placement(of viewController: UIViewController) -> String {
+      let parent = viewController.parent.map { String(describing: type(of: $0)) } ?? "nil"
+      let superview = viewController.viewIfLoaded?.superview.map { String(describing: type(of: $0)) } ?? "nil"
+      let inWindow = viewController.viewIfLoaded?.window != nil
+      return "\(type(of: viewController)): parent=\(parent), superview=\(superview), inWindow=\(inWindow)"
     }
 
     /// Whether the harness's own hosting controller for this preview is still alive. A leaked
