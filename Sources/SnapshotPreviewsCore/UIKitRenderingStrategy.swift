@@ -52,15 +52,8 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   }
 
   private static func expandingViewController(under viewController: UIViewController) -> ExpandingViewController? {
-    if let expanding = viewController as? ExpandingViewController {
-      return expanding
-    }
-    for child in viewController.children {
-      if let expanding = expandingViewController(under: child) {
-        return expanding
-      }
-    }
-    return nil
+    (viewController as? ExpandingViewController)
+      ?? viewController.children.lazy.compactMap(expandingViewController(under:)).first
   }
 
   private let window: UIWindow

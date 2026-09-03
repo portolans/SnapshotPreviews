@@ -111,7 +111,10 @@ public enum PreviewDeallocationTracker {
   }
 
   static func trackHost(_ viewController: UIViewController) {
+    // A new host means a new render of this preview; whatever the strategy discarded before it
+    // (the accessibility warm-up's throwaway host, say) says nothing about this render.
     current?.host = WeakViewController(viewController)
+    current?.released = false
   }
 
   fileprivate struct WeakViewController {
