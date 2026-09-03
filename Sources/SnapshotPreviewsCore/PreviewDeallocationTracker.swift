@@ -92,11 +92,26 @@ public enum PreviewDeallocationTracker {
     current
   }
 
+  /// Previews whose controllers were still alive one render later. Judged once at the end of the
+  /// class, after a single bounded wait, rather than by waiting inside a test: under parallel
+  /// testing, waiting on the main run loop from inside a test method has hung the test host.
+  public static var deferredPreviews: [RenderedPreview] {
+    deferred
+  }
+
+  /// Sets a preview aside to be judged at the end of the class.
+  public static func deferJudgement(of preview: RenderedPreview) {
+    deferred.append(preview)
+  }
+
   /// Records that the strategy has discarded the render hosted by `host`, so the preview it
   /// belongs to can be judged.
   public static func hostDismantled(_ host: UIViewController) {
     if current?.host?.viewController === host { current?.released = true }
     if previous?.host?.viewController === host { previous?.released = true }
+    for index in deferred.indices where deferred[index].host?.viewController === host {
+      deferred[index].released = true
+    }
   }
 
   /// Forgets every tracked preview. Each test class starts and ends with a clean slate so one
@@ -104,6 +119,7 @@ public enum PreviewDeallocationTracker {
   public static func reset() {
     current = nil
     previous = nil
+    deferred = []
   }
 
   static func track(_ viewController: UIViewController) {
@@ -127,5 +143,6 @@ public enum PreviewDeallocationTracker {
 
   private static var current: RenderedPreview?
   private static var previous: RenderedPreview?
+  private static var deferred: [RenderedPreview] = []
 }
 #endif
