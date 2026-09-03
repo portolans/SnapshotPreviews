@@ -149,17 +149,17 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
 
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
     if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview {
-      // This render replaced the previous preview in the window, so its controllers have had a
-      // whole render cycle to go away. A plain UIKit controller still alive now is retained by its
-      // own graph. Two cases need more time and are judged once at tearDown instead: the platform
-      // still holds the harness's own hosting controller, or the screen is itself a
-      // UIHostingController, which SwiftUI dismantles on its own schedule.
+      // This render replaced the previous preview in the window, after giving its hosting
+      // controller a last empty update, so its controllers have had a whole render cycle to go
+      // away. A plain UIKit controller still alive now is retained by its own graph. A screen that
+      // is itself a UIHostingController is dismantled by SwiftUI on its own schedule, so it is
+      // judged once at tearDown instead.
       let survivors = previous.survivingViewControllers
       if !survivors.isEmpty {
-        if previous.hostIsAlive || survivors.contains(where: PreviewDeallocationTracker.isHostingController) {
+        if survivors.contains(where: PreviewDeallocationTracker.isHostingController) {
           PreviewDeallocationTracker.deferJudgement(of: previous)
         } else {
-          recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors)
+          recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, hostIsAlive: previous.hostIsAlive)
         }
       }
     }
@@ -168,9 +168,8 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
 
   #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
   /// Judges, once per process, the previews that could not be judged one render later: the last
-  /// one rendered (nothing came after it), and any set aside because the platform still held the
-  /// harness's hosting controller or the screen is itself a UIHostingController. Releases the last
-  /// render, waits a bounded moment, then reports what is still alive.
+  /// one rendered (nothing came after it) and any screen that is itself a UIHostingController.
+  /// Releases the last render, waits a bounded moment, then reports what is still alive.
   open override class func tearDown() {
     if checksPreviewDeallocation() {
       MainActor.assumeIsolated {
@@ -188,21 +187,13 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
           object: nil
         )
         _ = XCTWaiter().wait(for: [released], timeout: 2)
-        var inconclusiveCount = 0
         for preview in previews {
-          if preview.hostIsAlive {
-            // Not a leak in the screen: the platform kept the whole render alive (the iOS 18
-            // simulator does this for every UIKit preview), so there is nothing to judge.
-            inconclusiveCount += 1
-          } else if let description = leakDescription(previewNamed: preview.name, survivors: preview.survivingViewControllers) {
+          if let description = leakDescription(previewNamed: preview.name, survivors: preview.survivingViewControllers, hostIsAlive: preview.hostIsAlive) {
             // Recorded outside a test case, so carry the #Preview's file and line in the message
             // where tooling can still find them.
             let location = [preview.fileID, preview.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
             XCTFail(location.isEmpty ? description : "\(location): \(description)")
           }
-        }
-        if inconclusiveCount > 0 {
-          print("Preview deallocation check: inconclusive for \(inconclusiveCount) preview(s) whose hosting controller the platform kept alive.")
         }
       }
     }
@@ -213,8 +204,8 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   // implementation-only import, and a subclass in another module cannot load a member whose
   // signature mentions one of its types.
   @MainActor
-  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController]) {
-    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors) else { return }
+  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController], hostIsAlive: Bool) {
+    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors, hostIsAlive: hostIsAlive) else { return }
     var issue = XCTIssue(type: .assertionFailure, compactDescription: description)
     // Attribute the failure to the #Preview so it lands on the screen's own file rather than in
     // the harness.
@@ -225,10 +216,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   @MainActor
-  private static func leakDescription(previewNamed name: String, survivors: [UIViewController]) -> String? {
+  private static func leakDescription(previewNamed name: String, survivors: [UIViewController], hostIsAlive: Bool) -> String? {
     guard !survivors.isEmpty else { return nil }
     let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
-    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer."
+    let hostNote = hostIsAlive ? " (The harness's own hosting controller is also still alive, which a leaked screen can cause.)" : ""
+    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer.\(hostNote)"
   }
   #endif
 }
