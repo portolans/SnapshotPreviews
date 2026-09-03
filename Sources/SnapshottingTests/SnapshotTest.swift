@@ -164,10 +164,15 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       MainActor.assumeIsolated {
         guard let current = PreviewDeallocationTracker.currentPreview else { return }
         renderingStrategies[ObjectIdentifier(Self.self)]?.releaseRenderedPreview()
-        let deadline = Date(timeIntervalSinceNow: 2)
-        while !current.survivingViewControllers.isEmpty, Date() < deadline {
-          RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
-        }
+        // Wait through XCTest rather than by spinning the run loop ourselves: under parallel
+        // testing a raw `RunLoop.run` inside the harness deadlocked the test host.
+        let released = XCTNSPredicateExpectation(
+          predicate: NSPredicate { _, _ in
+            MainActor.assumeIsolated { current.survivingViewControllers.isEmpty }
+          },
+          object: nil
+        )
+        _ = XCTWaiter().wait(for: [released], timeout: 2)
         if let description = leakDescription(of: current) {
           XCTFail(description)
         }
