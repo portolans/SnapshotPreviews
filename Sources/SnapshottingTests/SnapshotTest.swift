@@ -156,7 +156,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       // reported in this test case, at the previous preview's own file and line. A real cycle never
       // lets go. (A render that failed before replacing the window's root leaves the previous
       // preview hosted, and unjudged.)
-      let survivors = awaitRelease(of: previous)
+      let survivors = awaitRelease(previewNamed: previous.name) { previous.survivingViewControllers }
       if !survivors.isEmpty {
         recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, placement: previous.survivorPlacement, hostIsAlive: previous.hostIsAlive)
       }
@@ -199,14 +199,16 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// XCTest's stall watchdog aborted the host; a raw `RunLoop.run` deadlocked it under parallel
   /// testing. The expectation is fulfilled by a main-run-loop timer either when the controllers are
   /// gone or when the deadline passes, so the wait itself never records a timeout.
+  // Takes plain values: SnapshotPreviewsCore is an implementation-only import, and a subclass in
+  // another module cannot load any member, even a private one, whose signature names its types.
   @MainActor
-  private func awaitRelease(of preview: PreviewDeallocationTracker.RenderedPreview) -> [UIViewController] {
-    guard !preview.survivingViewControllers.isEmpty else { return [] }
-    let settled = XCTestExpectation(description: "\(preview.name) released")
+  private func awaitRelease(previewNamed name: String, survivors: @escaping @MainActor () -> [UIViewController]) -> [UIViewController] {
+    guard !survivors().isEmpty else { return [] }
+    let settled = XCTestExpectation(description: "\(name) released")
     let deadline = Date().addingTimeInterval(2)
     let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
       MainActor.assumeIsolated {
-        if preview.survivingViewControllers.isEmpty || Date() >= deadline {
+        if survivors().isEmpty || Date() >= deadline {
           timer.invalidate()
           settled.fulfill()
         }
@@ -215,7 +217,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     RunLoop.main.add(timer, forMode: .common)
     wait(for: [settled], timeout: 5)
     timer.invalidate()
-    return preview.survivingViewControllers
+    return survivors()
   }
 
   // These helpers take plain values rather than tracker types: SnapshotPreviewsCore is an
