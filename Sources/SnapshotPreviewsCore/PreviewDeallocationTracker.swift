@@ -67,6 +67,31 @@ public enum PreviewDeallocationTracker {
     current
   }
 
+  /// Previews whose controllers were still alive one render later for a reason that needs more
+  /// time to rule out: the harness's own hosting controller had not been released, or the screen
+  /// is itself a `UIHostingController`, which SwiftUI dismantles on its own schedule. Judge these
+  /// once at the end, after a bounded wait.
+  public static var deferredPreviews: [RenderedPreview] {
+    deferred
+  }
+
+  /// Sets a preview aside to be judged at the end of the run.
+  public static func deferJudgement(of preview: RenderedPreview) {
+    deferred.append(preview)
+  }
+
+  /// Whether the view controller is (a subclass of) `UIHostingController`.
+  public static func isHostingController(_ viewController: UIViewController) -> Bool {
+    var candidate: AnyClass? = type(of: viewController)
+    while let type = candidate {
+      if NSStringFromClass(type).contains("UIHostingController") {
+        return true
+      }
+      candidate = type.superclass()
+    }
+    return false
+  }
+
   static func track(_ viewController: UIViewController) {
     current?.controllers.append(WeakViewController(viewController))
   }
@@ -85,5 +110,6 @@ public enum PreviewDeallocationTracker {
 
   private static var current: RenderedPreview?
   private static var previous: RenderedPreview?
+  private static var deferred: [RenderedPreview] = []
 }
 #endif
