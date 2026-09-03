@@ -160,8 +160,18 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
         survivors = PreviewDeallocationTracker.survivingViewControllers()
       }
       if !survivors.isEmpty {
-        let typeNames = survivors.map { String(describing: type(of: $0)) }.joined(separator: ", ")
-        XCTFail("Preview \(previewName) leaked \(typeNames): still alive after the preview was torn down, so something in its own graph retains it.")
+        let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
+        let previewLabel = preview.displayName.map { "the \"\($0)\" preview" } ?? "preview \(discoveredPreview.index)"
+        var issue = XCTIssue(
+          type: .assertionFailure,
+          compactDescription: "\(typeNames) is still alive after \(previewLabel) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer."
+        )
+        // Attribute the failure to the #Preview so it shows up on the screen's own file rather
+        // than in the harness.
+        if let fileID = previewType.fileID, let line = previewType.line {
+          issue.sourceCodeContext = XCTSourceCodeContext(location: XCTSourceCodeLocation(filePath: fileID, lineNumber: line))
+        }
+        record(issue)
       }
     }
     #endif
