@@ -41,6 +41,29 @@ public enum PreviewDeallocationTracker {
       controllers.compactMap(\.viewController)
     }
 
+    /// Takes every tracked controller that is still alive out of the harness's own hierarchy:
+    /// out of its parent and its view out of the view tree. The harness added it there, so the
+    /// harness removes it, the way a real navigation would; anything that keeps the controller
+    /// alive after this is the screen's own.
+    public func detachSurvivingViewControllers() {
+      for viewController in survivingViewControllers {
+        viewController.willMove(toParent: nil)
+        viewController.viewIfLoaded?.removeFromSuperview()
+        viewController.removeFromParent()
+      }
+    }
+
+    /// Where each surviving controller still sits, for a failure report: its parent, its view's
+    /// superview, and whether that view is still in a window.
+    public var survivorPlacement: String {
+      survivingViewControllers.map { viewController in
+        let parent = viewController.parent.map { String(describing: type(of: $0)) } ?? "nil"
+        let superview = viewController.viewIfLoaded?.superview.map { String(describing: type(of: $0)) } ?? "nil"
+        let inWindow = viewController.viewIfLoaded?.window != nil
+        return "\(type(of: viewController)): parent=\(parent), superview=\(superview), inWindow=\(inWindow)"
+      }.joined(separator: "; ")
+    }
+
     /// Whether the harness's own hosting controller for this preview is still alive. A leaked
     /// screen can keep it alive, so this is diagnostic context for a report, not a verdict.
     public var hostIsAlive: Bool {

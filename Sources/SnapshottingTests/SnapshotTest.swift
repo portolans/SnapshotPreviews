@@ -159,7 +159,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
         if survivors.contains(where: PreviewDeallocationTracker.isHostingController) {
           PreviewDeallocationTracker.deferJudgement(of: previous)
         } else {
-          recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, hostIsAlive: previous.hostIsAlive)
+          recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, placement: previous.survivorPlacement, hostIsAlive: previous.hostIsAlive)
         }
       }
     }
@@ -188,7 +188,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
         )
         _ = XCTWaiter().wait(for: [released], timeout: 2)
         for preview in previews {
-          if let description = leakDescription(previewNamed: preview.name, survivors: preview.survivingViewControllers, hostIsAlive: preview.hostIsAlive) {
+          if let description = leakDescription(previewNamed: preview.name, survivors: preview.survivingViewControllers, placement: preview.survivorPlacement, hostIsAlive: preview.hostIsAlive) {
             // Recorded outside a test case, so carry the #Preview's file and line in the message
             // where tooling can still find them.
             let location = [preview.fileID, preview.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
@@ -204,8 +204,8 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   // implementation-only import, and a subclass in another module cannot load a member whose
   // signature mentions one of its types.
   @MainActor
-  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController], hostIsAlive: Bool) {
-    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors, hostIsAlive: hostIsAlive) else { return }
+  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController], placement: String, hostIsAlive: Bool) {
+    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors, placement: placement, hostIsAlive: hostIsAlive) else { return }
     var issue = XCTIssue(type: .assertionFailure, compactDescription: description)
     // Attribute the failure to the #Preview so it lands on the screen's own file rather than in
     // the harness.
@@ -216,11 +216,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   @MainActor
-  private static func leakDescription(previewNamed name: String, survivors: [UIViewController], hostIsAlive: Bool) -> String? {
+  private static func leakDescription(previewNamed name: String, survivors: [UIViewController], placement: String, hostIsAlive: Bool) -> String? {
     guard !survivors.isEmpty else { return nil }
     let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
-    let hostNote = hostIsAlive ? " (The harness's own hosting controller is also still alive, which a leaked screen can cause.)" : ""
-    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer.\(hostNote)"
+    let hostNote = hostIsAlive ? " The harness's own hosting controller is also still alive, which a leaked screen can cause." : ""
+    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer. [\(placement)]\(hostNote)"
   }
   #endif
 }

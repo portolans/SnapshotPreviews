@@ -54,6 +54,7 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     expanding.expansionSettled = nil
     expanding.rootView = EmergeModifierView(wrapped: EmptyView())
     expanding.view.layoutIfNeeded()
+    PreviewDeallocationTracker.currentPreview?.detachSurvivingViewControllers()
   }
 
   private static func expandingViewController(under viewController: UIViewController) -> ExpandingViewController? {
