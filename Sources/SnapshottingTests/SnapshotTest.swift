@@ -151,7 +151,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview {
       // This render replaced the previous preview in the window, so its controllers have had a
       // whole render cycle to go away. Whatever is left is retained by its own graph.
-      recordLeak(of: previous)
+      recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: previous.survivingViewControllers)
     }
     #endif
   }
@@ -173,7 +173,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
           object: nil
         )
         _ = XCTWaiter().wait(for: [released], timeout: 2)
-        if let description = leakDescription(of: current) {
+        if let description = leakDescription(previewNamed: current.name, survivors: current.survivingViewControllers) {
           XCTFail(description)
         }
       }
@@ -181,24 +181,26 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     super.tearDown()
   }
 
+  // These helpers take plain values rather than tracker types: SnapshotPreviewsCore is an
+  // implementation-only import, and a subclass in another module cannot load a member whose
+  // signature mentions one of its types.
   @MainActor
-  private func recordLeak(of rendered: PreviewDeallocationTracker.RenderedPreview) {
-    guard let description = Self.leakDescription(of: rendered) else { return }
+  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController]) {
+    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors) else { return }
     var issue = XCTIssue(type: .assertionFailure, compactDescription: description)
     // Attribute the failure to the #Preview so it lands on the screen's own file rather than in
     // the harness.
-    if let fileID = rendered.fileID, let line = rendered.line {
+    if let fileID, let line {
       issue.sourceCodeContext = XCTSourceCodeContext(location: XCTSourceCodeLocation(filePath: fileID, lineNumber: line))
     }
     record(issue)
   }
 
   @MainActor
-  private static func leakDescription(of rendered: PreviewDeallocationTracker.RenderedPreview) -> String? {
-    let survivors = rendered.survivingViewControllers
+  private static func leakDescription(previewNamed name: String, survivors: [UIViewController]) -> String? {
     guard !survivors.isEmpty else { return nil }
     let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
-    return "\(typeNames) is still alive after preview \(rendered.name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer."
+    return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer."
   }
   #endif
 }
