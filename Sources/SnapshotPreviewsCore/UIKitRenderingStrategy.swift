@@ -43,14 +43,12 @@ public class UIKitRenderingStrategy: RenderingStrategy {
     }
   }
 
-  /// Stops the outgoing render's settle callback from firing again and takes the previewed
-  /// controllers out of the harness's own hierarchy. The harness added them there, so the harness
-  /// removes them, the way a real navigation would; anything that keeps a controller alive after
-  /// this is the screen's own.
+  /// Stops the outgoing render's settle callback from firing again and tells the tracker that
+  /// this render is being discarded, so its preview may be judged.
   @MainActor private func dismantleHostedPreview() {
     guard let root = window.rootViewController, let expanding = Self.expandingViewController(under: root) else { return }
     expanding.expansionSettled = nil
-    PreviewDeallocationTracker.currentPreview?.detachSurvivingViewControllers()
+    PreviewDeallocationTracker.hostDismantled(expanding)
   }
 
   private static func expandingViewController(under viewController: UIViewController) -> ExpandingViewController? {
@@ -197,7 +195,10 @@ public class UIKitRenderingStrategy: RenderingStrategy {
   // without that wrapper leaves a11y previews at the collapsed height.
   @MainActor private func warmUp(completion: @escaping () -> Void) {
     let dummy = WarmUpScrollView(contentHeight: max(window.bounds.height, 1) * 2)
-    let controller = dummy.makeExpandingView(layout: .device, window: window)
+    // The warm-up replaces the window root like a render does, with the same autorelease
+    // consequences (see performRender).
+    autoreleasepool { dismantleHostedPreview() }
+    let controller = autoreleasepool { dummy.makeExpandingView(layout: .device, window: window) }
     dummy.snapshot(
       layout: .device,
       controller: controller,

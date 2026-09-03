@@ -38,11 +38,11 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
 
   /// Whether each preview's view controllers must deallocate once the preview is torn down.
   ///
-  /// Override to return `true` to fail a preview's test when a view controller it built is still
-  /// alive after the render — the signature of a retain cycle inside that screen. Off by default so
-  /// existing suites keep their behavior until they opt in.
+  /// On by default: a view controller a preview built that is still alive after the render is the
+  /// signature of a retain cycle inside that screen, and fails the preview's test. Override to
+  /// return `false` to opt a suite out.
   open class func checksPreviewDeallocation() -> Bool {
-    false
+    true
   }
   #endif
 
@@ -148,12 +148,13 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     }
 
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
-    if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview {
+    if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview, previous.wasReleased {
       // This render replaced the previous preview in the window and drained what UIKit
       // autoreleased in the process, so its controllers have had a whole render cycle to go away.
       // A plain UIKit controller still alive now is retained by its own graph. A screen that is
       // itself a UIHostingController is dismantled by SwiftUI on its own schedule, so it is judged
-      // once at tearDown instead.
+      // once at tearDown instead. (A render that failed before replacing the window's root leaves
+      // the previous preview hosted, and unjudged.)
       let survivors = previous.survivingViewControllers
       if !survivors.isEmpty {
         if survivors.contains(where: PreviewDeallocationTracker.isHostingController) {
@@ -167,7 +168,12 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
-  /// Judges, once per process, the previews that could not be judged one render later: the last
+  open override class func setUp() {
+    super.setUp()
+    MainActor.assumeIsolated { PreviewDeallocationTracker.reset() }
+  }
+
+  /// Judges, once per class, the previews that could not be judged one render later: the last
   /// one rendered (nothing came after it) and any screen that is itself a UIHostingController.
   /// Releases the last render, waits a bounded moment, then reports what is still alive.
   open override class func tearDown() {
@@ -178,6 +184,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
         if let current = PreviewDeallocationTracker.currentPreview {
           previews.append(current)
         }
+        previews = previews.filter(\.wasReleased)
         // Wait through XCTest rather than by spinning the run loop ourselves: under parallel
         // testing a raw `RunLoop.run` inside the harness deadlocked the test host.
         let released = XCTNSPredicateExpectation(
@@ -195,6 +202,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
             XCTFail(location.isEmpty ? description : "\(location): \(description)")
           }
         }
+        PreviewDeallocationTracker.reset()
       }
     }
     super.tearDown()

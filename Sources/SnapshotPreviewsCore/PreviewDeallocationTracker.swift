@@ -35,22 +35,18 @@ public enum PreviewDeallocationTracker {
 
     fileprivate var controllers: [WeakViewController] = []
     fileprivate var host: WeakViewController?
+    fileprivate var released = false
+
+    /// Whether the strategy has discarded this preview's render. Until it has, the controllers are
+    /// legitimately hosted and say nothing about the screen; a render that failed before
+    /// replacing the window's root leaves the previous preview in place.
+    public var wasReleased: Bool {
+      released
+    }
 
     /// The tracked view controllers that are still alive.
     public var survivingViewControllers: [UIViewController] {
       controllers.compactMap(\.viewController)
-    }
-
-    /// Takes every tracked controller that is still alive out of the harness's own hierarchy:
-    /// out of its parent and its view out of the view tree. The harness added it there, so the
-    /// harness removes it, the way a real navigation would; anything that keeps the controller
-    /// alive after this is the screen's own.
-    public func detachSurvivingViewControllers() {
-      for viewController in survivingViewControllers {
-        viewController.willMove(toParent: nil)
-        viewController.viewIfLoaded?.removeFromSuperview()
-        viewController.removeFromParent()
-      }
     }
 
     /// Where each surviving controller still sits, for a failure report: its parent, its view's
@@ -106,6 +102,24 @@ public enum PreviewDeallocationTracker {
   /// Sets a preview aside to be judged at the end of the run.
   public static func deferJudgement(of preview: RenderedPreview) {
     deferred.append(preview)
+  }
+
+  /// Records that the strategy has discarded the render hosted by `host`, so the preview it
+  /// belongs to can be judged.
+  public static func hostDismantled(_ host: UIViewController) {
+    if current?.host?.viewController === host { current?.released = true }
+    if previous?.host?.viewController === host { previous?.released = true }
+    for index in deferred.indices where deferred[index].host?.viewController === host {
+      deferred[index].released = true
+    }
+  }
+
+  /// Forgets every tracked preview. Each test class starts and ends with a clean slate so one
+  /// class's last render, still hosted in that class's own window, is never judged by the next.
+  public static func reset() {
+    current = nil
+    previous = nil
+    deferred = []
   }
 
   /// Whether the view controller is (a subclass of) `UIHostingController`.
