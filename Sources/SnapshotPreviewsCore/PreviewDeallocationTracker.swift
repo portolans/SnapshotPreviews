@@ -34,10 +34,18 @@ public enum PreviewDeallocationTracker {
     public let line: Int?
 
     fileprivate var controllers: [WeakViewController] = []
+    fileprivate var host: WeakViewController?
 
     /// The tracked view controllers that are still alive.
     public var survivingViewControllers: [UIViewController] {
       controllers.compactMap(\.viewController)
+    }
+
+    /// Whether the harness's own hosting controller for this preview is still alive. When it is,
+    /// the platform is holding the whole render, so a surviving preview controller says nothing
+    /// about the screen.
+    public var hostIsAlive: Bool {
+      host?.viewController != nil
     }
   }
 
@@ -61,6 +69,10 @@ public enum PreviewDeallocationTracker {
 
   static func track(_ viewController: UIViewController) {
     current?.controllers.append(WeakViewController(viewController))
+  }
+
+  static func trackHost(_ viewController: UIViewController) {
+    current?.host = WeakViewController(viewController)
   }
 
   fileprivate struct WeakViewController {

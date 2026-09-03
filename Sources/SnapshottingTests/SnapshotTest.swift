@@ -151,7 +151,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview {
       // This render replaced the previous preview in the window, so its controllers have had a
       // whole render cycle to go away. Whatever is left is retained by its own graph.
-      recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: previous.survivingViewControllers)
+      recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: previous.survivingViewControllers, hostIsAlive: previous.hostIsAlive)
     }
     #endif
   }
@@ -173,7 +173,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
           object: nil
         )
         _ = XCTWaiter().wait(for: [released], timeout: 2)
-        if let description = leakDescription(previewNamed: current.name, survivors: current.survivingViewControllers) {
+        if let description = leakDescription(previewNamed: current.name, survivors: current.survivingViewControllers, hostIsAlive: current.hostIsAlive) {
           XCTFail(description)
         }
       }
@@ -185,8 +185,8 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   // implementation-only import, and a subclass in another module cannot load a member whose
   // signature mentions one of its types.
   @MainActor
-  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController]) {
-    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors) else { return }
+  private func recordLeak(previewNamed name: String, fileID: String?, line: Int?, survivors: [UIViewController], hostIsAlive: Bool) {
+    guard let description = Self.leakDescription(previewNamed: name, survivors: survivors, hostIsAlive: hostIsAlive) else { return }
     var issue = XCTIssue(type: .assertionFailure, compactDescription: description)
     // Attribute the failure to the #Preview so it lands on the screen's own file rather than in
     // the harness.
@@ -197,9 +197,12 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   @MainActor
-  private static func leakDescription(previewNamed name: String, survivors: [UIViewController]) -> String? {
+  private static func leakDescription(previewNamed name: String, survivors: [UIViewController], hostIsAlive: Bool) -> String? {
     guard !survivors.isEmpty else { return nil }
     let typeNames = Set(survivors.map { String(describing: type(of: $0)) }).sorted().joined(separator: ", ")
+    if hostIsAlive {
+      return "\(typeNames) is still alive after preview \(name) was torn down, but so is the harness's own hosting controller, so the platform is holding the whole render and this says nothing about the screen."
+    }
     return "\(typeNames) is still alive after preview \(name) was torn down. Something in its own graph retains it. Look for a stored closure that captures self (a cell registration or configuration handler whose nested closure is the only weak capture), a child holding its parent, or a subscription without a weak observer."
   }
   #endif

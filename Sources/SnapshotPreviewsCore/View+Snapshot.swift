@@ -35,6 +35,7 @@ extension View {
       _colorScheme = scheme
     }
     let controller = ExpandingViewController(rootView: wrappedView)
+    PreviewDeallocationTracker.trackHost(controller)
     controller.setupView(layout: layout)
 
     let windowRootVC = Self.setupRootVC(subVC: controller)
