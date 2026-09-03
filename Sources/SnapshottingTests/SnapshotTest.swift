@@ -173,6 +173,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
   open override class func setUp() {
     super.setUp()
+    LeaksHold.registerIfRequested()
     MainActor.assumeIsolated { PreviewDeallocationTracker.reset() }
   }
 
