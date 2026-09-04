@@ -207,14 +207,14 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// XCTest's stall watchdog aborted the host; a raw `RunLoop.run` deadlocked it under parallel
   /// testing. The expectation is fulfilled by a main-run-loop timer either when the controllers are
   /// gone or when the deadline passes, so the wait itself never records a timeout.
-  /// Diagnostic hold for an external `leaks --traceTree`: when `PREVIEW_LEAK_TRACE_DIR` is set, writes
+  /// Diagnostic hold for an external `leaks --traceTree`: when `PREVIEW_LEAKS_TRACE_DIR` is set, writes
   /// this process's pid and the survivors' addresses to `<dir>/<pid>.trace` and waits (bounded, via
   /// the main dispatch queue) for `<dir>/<pid>.trace.done` before the leak is recorded. A sidecar
   /// that watches the directory runs `leaks <pid> --traceTree=<address>` for each address.
   @MainActor
   private func holdForRetainTrace(of objects: [UIViewController]) {
     let environment = ProcessInfo.processInfo.environment
-    guard let directory = environment["PREVIEW_LEAK_TRACE_DIR"], !objects.isEmpty else { return }
+    guard let directory = environment["PREVIEW_LEAKS_TRACE_DIR"], !objects.isEmpty else { return }
     let pid = ProcessInfo.processInfo.processIdentifier
     let base = URL(fileURLWithPath: directory)
     try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -222,7 +222,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     let traceURL = base.appendingPathComponent("\(pid)-\(Int(Date().timeIntervalSince1970 * 1000)).trace")
     guard (try? line.data(using: .utf8)?.write(to: traceURL)) != nil else { return }
     let doneURL = URL(fileURLWithPath: traceURL.path + ".done")
-    let timeout = environment["PREVIEW_LEAK_TRACE_TIMEOUT"].flatMap(Double.init) ?? 150
+    let timeout = environment["PREVIEW_LEAKS_TRACE_TIMEOUT"].flatMap(Double.init) ?? 150
     let settled = XCTestExpectation(description: "retain trace")
     let deadline = DispatchTime.now() + timeout
     @MainActor func poll() {
