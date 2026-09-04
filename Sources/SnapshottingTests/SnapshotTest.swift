@@ -164,6 +164,7 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
       // preview hosted, and unjudged.)
       let survivors = awaitRelease(previewNamed: previous.name) { previous.survivingViewControllers }
       if !survivors.isEmpty {
+        holdForRetainTrace(of: survivors + [previous.hostViewController].compactMap { $0 })
         recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, placement: previous.survivorPlacement, hostIsAlive: previous.hostIsAlive)
       }
     }
@@ -206,6 +207,35 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// XCTest's stall watchdog aborted the host; a raw `RunLoop.run` deadlocked it under parallel
   /// testing. The expectation is fulfilled by a main-run-loop timer either when the controllers are
   /// gone or when the deadline passes, so the wait itself never records a timeout.
+  /// Diagnostic hold for an external `leaks --traceTree`: when `PREVIEW_LEAK_TRACE_DIR` is set, writes
+  /// this process's pid and the survivors' addresses to `<dir>/<pid>.trace` and waits (bounded, via
+  /// the main dispatch queue) for `<dir>/<pid>.trace.done` before the leak is recorded. A sidecar
+  /// that watches the directory runs `leaks <pid> --traceTree=<address>` for each address.
+  @MainActor
+  private func holdForRetainTrace(of objects: [UIViewController]) {
+    let environment = ProcessInfo.processInfo.environment
+    guard let directory = environment["PREVIEW_LEAK_TRACE_DIR"], !objects.isEmpty else { return }
+    let pid = ProcessInfo.processInfo.processIdentifier
+    let base = URL(fileURLWithPath: directory)
+    try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    let line = ([String(pid)] + objects.map { "\(Unmanaged.passUnretained($0).toOpaque())" }).joined(separator: " ") + "\n"
+    let traceURL = base.appendingPathComponent("\(pid)-\(Int(Date().timeIntervalSince1970 * 1000)).trace")
+    guard (try? line.data(using: .utf8)?.write(to: traceURL)) != nil else { return }
+    let doneURL = URL(fileURLWithPath: traceURL.path + ".done")
+    let timeout = environment["PREVIEW_LEAK_TRACE_TIMEOUT"].flatMap(Double.init) ?? 150
+    let settled = XCTestExpectation(description: "retain trace")
+    let deadline = DispatchTime.now() + timeout
+    @MainActor func poll() {
+      if FileManager.default.fileExists(atPath: doneURL.path) || DispatchTime.now() >= deadline {
+        settled.fulfill()
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { MainActor.assumeIsolated { poll() } }
+      }
+    }
+    poll()
+    wait(for: [settled], timeout: timeout + 5)
+  }
+
   // Takes plain values: SnapshotPreviewsCore is an implementation-only import, and a subclass in
   // another module cannot load any member, even a private one, whose signature names its types.
   //

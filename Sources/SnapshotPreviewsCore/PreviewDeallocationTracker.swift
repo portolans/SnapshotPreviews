@@ -67,6 +67,11 @@ public enum PreviewDeallocationTracker {
       return "\(type(of: viewController)): parent=\(parent), superview=\(superview), inWindow=\(inWindow)"
     }
 
+    /// The harness's own hosting controller for this preview, while it is alive.
+    public var hostViewController: UIViewController? {
+      host?.viewController
+    }
+
     /// Whether the harness's own hosting controller for this preview is still alive. A leaked
     /// screen can keep it alive, so this is diagnostic context for a report, not a verdict.
     public var hostIsAlive: Bool {
