@@ -127,12 +127,18 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #if canImport(UIKit) && !os(watchOS)
     PreviewDeallocationTracker.beginPreview(name: previewName, fileID: previewType.fileID, line: previewType.line)
     #endif
-    let expectation = XCTestExpectation()
-    strategy.render(preview: preview) { snapshotResult in
-      result = snapshotResult
-      expectation.fulfill()
+    // The render and its wait get their own autorelease pool: anything UIKit or the accessibility
+    // capture autoreleases while this preview renders (including the previous preview's root tree,
+    // which is torn down here) must be gone before the next preview judges this one. Without it those
+    // references sit in the test method's pool until the method returns.
+    autoreleasepool {
+      let expectation = XCTestExpectation()
+      strategy.render(preview: preview) { snapshotResult in
+        result = snapshotResult
+        expectation.fulfill()
+      }
+      wait(for: [expectation], timeout: 10)
     }
-    wait(for: [expectation], timeout: 10)
     guard let result else {
       XCTFail("Did not render")
       return
