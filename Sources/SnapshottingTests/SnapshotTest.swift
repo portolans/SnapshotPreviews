@@ -150,13 +150,13 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     #if canImport(UIKit) && !os(watchOS) && !os(visionOS) && !os(tvOS)
     if Self.checksPreviewDeallocation(), let previous = PreviewDeallocationTracker.previousPreview, previous.wasReleased {
       // This render replaced the previous preview in the window and drained what UIKit
-      // autoreleased in the process, so its controllers have had a whole render cycle to go away
-      // and a healthy preview costs no wait at all. One still alive gets a bounded moment for
-      // whatever is finishing up (SwiftUI dismantling a hosting controller, a container's
-      // transition completing) before it is reported; a real cycle never lets go. (A render that
-      // failed before replacing the window's root leaves the previous preview hosted, and
-      // unjudged.)
-      let survivors = Self.awaitRelease(of: previous)
+      // autoreleased in the process, so a healthy preview's controllers are gone by now and cost
+      // no wait. One still alive gets a bounded moment for whatever is finishing up (SwiftUI
+      // dismantling a hosting-controller screen, a container's transition completing) and is then
+      // reported in this test case, at the previous preview's own file and line. A real cycle never
+      // lets go. (A render that failed before replacing the window's root leaves the previous
+      // preview hosted, and unjudged.)
+      let survivors = awaitRelease(previewNamed: previous.name) { previous.survivingViewControllers }
       if !survivors.isEmpty {
         recordLeak(previewNamed: previous.name, fileID: previous.fileID, line: previous.line, survivors: survivors, placement: previous.survivorPlacement, hostIsAlive: previous.hostIsAlive)
       }
@@ -170,20 +170,21 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
     MainActor.assumeIsolated { PreviewDeallocationTracker.reset() }
   }
 
-  /// Judges the last preview the class rendered, which nothing came after: releases its render,
-  /// then reports what is still alive after the same bounded wait every survivor gets.
+  /// Judges, once per class, the previews that could not be judged one render later: the last one
+  /// rendered (nothing came after it) and any whose controllers were still alive when judged.
+  /// Releases the last render, waits a bounded moment once, then reports what is still alive.
+  /// Judges the last preview the class rendered, which nothing came after. Recorded outside any
+  /// test case, so the message carries the #Preview's file and line; XCTest may not surface a
+  /// class-tearDown failure under parallel testing, which leaves the last preview of each test
+  /// host a known gap. Nothing waits here: the only safe wait is a test case's own.
   open override class func tearDown() {
     if checksPreviewDeallocation() {
       MainActor.assumeIsolated {
         renderingStrategies[ObjectIdentifier(Self.self)]?.releaseRenderedPreview()
-        if let current = PreviewDeallocationTracker.currentPreview, current.wasReleased {
-          let survivors = awaitRelease(of: current)
-          if let description = leakDescription(previewNamed: current.name, survivors: survivors, placement: current.survivorPlacement, hostIsAlive: current.hostIsAlive) {
-            // Recorded outside a test case, so carry the #Preview's file and line in the message
-            // where tooling can still find them.
-            let location = [current.fileID, current.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
-            XCTFail(location.isEmpty ? description : "\(location): \(description)")
-          }
+        if let current = PreviewDeallocationTracker.currentPreview, current.wasReleased,
+           let description = leakDescription(previewNamed: current.name, survivors: current.survivingViewControllers, placement: current.survivorPlacement, hostIsAlive: current.hostIsAlive) {
+          let location = [current.fileID, current.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
+          XCTFail(location.isEmpty ? description : "\(location): \(description)")
         }
         PreviewDeallocationTracker.reset()
       }
@@ -192,17 +193,35 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   }
 
   /// The preview's controllers still alive after a bounded wait, which starts only if any is alive.
-  /// Waits through XCTest rather than by spinning the run loop: under parallel testing a raw
-  /// `RunLoop.run` inside the harness deadlocked the test host.
+  ///
+  /// The wait goes through this test case's own `wait(for:)`, the same call the render uses, from
+  /// the same main-actor context. A standalone `XCTWaiter` from this context never returned and
+  /// XCTest's stall watchdog aborted the host; a raw `RunLoop.run` deadlocked it under parallel
+  /// testing. The expectation is fulfilled by a main-run-loop timer either when the controllers are
+  /// gone or when the deadline passes, so the wait itself never records a timeout.
+  // Takes plain values: SnapshotPreviewsCore is an implementation-only import, and a subclass in
+  // another module cannot load any member, even a private one, whose signature names its types.
+  //
+  // Everything here runs on the main dispatch queue, never a run-loop timer. Inside a test's
+  // `wait(for:)` from this main-actor context, main-queue blocks are delivered (the render's own
+  // completion arrives that way) but run-loop timers never fire: a Timer-driven expectation, an
+  // XCTNSPredicateExpectation, and XCTest's own wait timeout all left the host waiting until CI's
+  // 30-minute limit.
   @MainActor
-  private static func awaitRelease(of preview: PreviewDeallocationTracker.RenderedPreview) -> [UIViewController] {
-    guard !preview.survivingViewControllers.isEmpty else { return [] }
-    let released = XCTNSPredicateExpectation(
-      predicate: NSPredicate { _, _ in MainActor.assumeIsolated { preview.survivingViewControllers.isEmpty } },
-      object: nil
-    )
-    _ = XCTWaiter().wait(for: [released], timeout: 2)
-    return preview.survivingViewControllers
+  private func awaitRelease(previewNamed name: String, survivors: @escaping @MainActor () -> [UIViewController]) -> [UIViewController] {
+    guard !survivors().isEmpty else { return [] }
+    let settled = XCTestExpectation(description: "\(name) released")
+    let deadline = DispatchTime.now() + 2
+    @MainActor func poll() {
+      if survivors().isEmpty || DispatchTime.now() >= deadline {
+        settled.fulfill()
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { MainActor.assumeIsolated { poll() } }
+      }
+    }
+    poll()
+    wait(for: [settled], timeout: 5)
+    return survivors()
   }
 
   // These helpers take plain values rather than tracker types: SnapshotPreviewsCore is an
