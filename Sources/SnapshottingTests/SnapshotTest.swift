@@ -201,22 +201,26 @@ open class SnapshotTest: PreviewBaseTest, PreviewFilters {
   /// gone or when the deadline passes, so the wait itself never records a timeout.
   // Takes plain values: SnapshotPreviewsCore is an implementation-only import, and a subclass in
   // another module cannot load any member, even a private one, whose signature names its types.
+  //
+  // Everything here runs on the main dispatch queue, never a run-loop timer. Inside a test's
+  // `wait(for:)` from this main-actor context, main-queue blocks are delivered (the render's own
+  // completion arrives that way) but run-loop timers never fire: a Timer-driven expectation, an
+  // XCTNSPredicateExpectation, and XCTest's own wait timeout all left the host waiting until CI's
+  // 30-minute limit.
   @MainActor
   private func awaitRelease(previewNamed name: String, survivors: @escaping @MainActor () -> [UIViewController]) -> [UIViewController] {
     guard !survivors().isEmpty else { return [] }
     let settled = XCTestExpectation(description: "\(name) released")
-    let deadline = Date().addingTimeInterval(2)
-    let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
-      MainActor.assumeIsolated {
-        if survivors().isEmpty || Date() >= deadline {
-          timer.invalidate()
-          settled.fulfill()
-        }
+    let deadline = DispatchTime.now() + 2
+    @MainActor func poll() {
+      if survivors().isEmpty || DispatchTime.now() >= deadline {
+        settled.fulfill()
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { MainActor.assumeIsolated { poll() } }
       }
     }
-    RunLoop.main.add(timer, forMode: .common)
+    poll()
     wait(for: [settled], timeout: 5)
-    timer.invalidate()
     return survivors()
   }
 
