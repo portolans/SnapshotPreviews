@@ -88,6 +88,10 @@ extension View {
             // image with its blinking caret is already baked in. Firing here
             // catches the inner first responder before the snapshot is baked.
             window.endEditing(true)
+            // The cursor subtree outlives the resign by a run-loop turn (see
+            // `hideResidualTextCursorViews`), and this wrapper bakes the inner view to a
+            // static image on construction, so anything still attached is baked in too.
+            window.hideResidualTextCursorViews()
             let a11yView = a11yWrapper(controller, window, layout)
             let result = Self.takeSnapshot(layout: .sizeThatFits, renderingMode: renderingMode, window: window, rootVC: containerVC, targetView: a11yView)
             a11yView.removeFromSuperview()
@@ -151,6 +155,7 @@ extension View {
         // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
         // capture happens.
         window.endEditing(true)
+        window.hideResidualTextCursorViews()
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
       return .success(screenshot)
@@ -222,7 +227,18 @@ extension UIView {
     // sibling view that's not in `self`'s subtree, so endEditing on `self`
     // alone misses the inner first responder. Calling endEditing on the
     // window covers the whole hierarchy.
-    (window ?? self).endEditing(true)
+    let editingRoot = window ?? self
+    editingRoot.endEditing(true)
+    // ...but resigning is only half of it: UIKit removes the cursor subtree on a later
+    // turn of the run loop, so a capture taken immediately after `endEditing` can still
+    // find it attached and draw it. Measured on iOS 18.0: first responder is already nil
+    // while `_UITextCursorTrailingGlowView` (alpha 0.32) and `_UICursorAccessoryView` are
+    // still visible in the tree, carrying no animations — a static leftover, not a blink
+    // phase. Whether that teardown wins the race against the capture is what made these
+    // snapshots flake. Hide what survives instead of waiting for it to go, so the result
+    // does not depend on timing. Spinning the run loop here would also let unrelated
+    // deferred work run, which is exactly the nondeterminism this harness exists to avoid.
+    editingRoot.hideResidualTextCursorViews()
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
@@ -262,4 +278,28 @@ extension CALayer {
     return false
   }
 }
+
+
+extension UIView {
+  /// Hides any text-cursor decoration left attached after `endEditing(true)`.
+  ///
+  /// Matches on class-name family rather than concrete private types so a renamed or
+  /// added decoration is still covered. Missing one is a benign regression to the
+  /// previous behaviour, whereas hiding a real view would be a visible bug.
+  ///
+  /// The four decorations observed on iOS 18.0 are `UIStandardTextCursorView`,
+  /// `_UITextCursorTrailingGlowView`, `_UICursorAccessoryHostView` and
+  /// `_UICursorAccessoryView` — note the visible one carries neither a `CursorView` nor
+  /// a `CursorAccessory` suffix, which is why this matches the bare `Cursor` stem.
+  func hideResidualTextCursorViews() {
+    let name = String(describing: type(of: self))
+    if name.contains("Cursor") || name.contains("Caret") {
+      isHidden = true
+    }
+    for subview in subviews {
+      subview.hideResidualTextCursorViews()
+    }
+  }
+}
+
 #endif
