@@ -20,6 +20,12 @@ jobs:
         run: xcodebuild build -scheme Snapshotting -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
       - name: Build SnapshottingTests
         run: xcodebuild build -scheme SnapshottingTests -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+      # The unit tests were only ever compiled, never executed, so a failing assertion
+      # could not fail this workflow. TextCursorHidingTests asserts that a consumer's
+      # view is left alone by the caret suppression, which a snapshot fixture cannot
+      # show: a view wrongly hidden still renders cleanly, just without its content.
+      - name: Test SnapshotPreviewsCore
+        run: xcodebuild test -scheme SnapshotPreviewsTests -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 15'
   build-tvos:
       runs-on: macos-14
 

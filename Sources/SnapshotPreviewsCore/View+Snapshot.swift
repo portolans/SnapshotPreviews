@@ -88,6 +88,10 @@ extension View {
             // image with its blinking caret is already baked in. Firing here
             // catches the inner first responder before the snapshot is baked.
             window.endEditing(true)
+            // The cursor subtree outlives the resign by a run-loop turn (see
+            // `hideResidualTextCursorViews`), and this wrapper bakes the inner view to a
+            // static image on construction, so anything still attached is baked in too.
+            window.hideResidualTextCursorViews()
             let a11yView = a11yWrapper(controller, window, layout)
             let result = Self.takeSnapshot(layout: .sizeThatFits, renderingMode: renderingMode, window: window, rootVC: containerVC, targetView: a11yView)
             a11yView.removeFromSuperview()
@@ -151,6 +155,7 @@ extension View {
         // viewWillAppear/viewDidAppear) don't re-claim focus before the pixel
         // capture happens.
         window.endEditing(true)
+        window.hideResidualTextCursorViews()
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
       return .success(screenshot)
@@ -222,7 +227,18 @@ extension UIView {
     // sibling view that's not in `self`'s subtree, so endEditing on `self`
     // alone misses the inner first responder. Calling endEditing on the
     // window covers the whole hierarchy.
-    (window ?? self).endEditing(true)
+    let editingRoot = window ?? self
+    editingRoot.endEditing(true)
+    // ...but resigning is only half of it: UIKit removes the cursor subtree on a later
+    // turn of the run loop, so a capture taken immediately after `endEditing` can still
+    // find it attached and draw it. Measured on iOS 18.0: first responder is already nil
+    // while `_UITextCursorTrailingGlowView` (alpha 0.32) and `_UICursorAccessoryView` are
+    // still visible in the tree, carrying no animations — a static leftover, not a blink
+    // phase. Whether that teardown wins the race against the capture is what made these
+    // snapshots flake. Hide what survives instead of waiting for it to go, so the result
+    // does not depend on timing. Spinning the run loop here would also let unrelated
+    // deferred work run, which is exactly the nondeterminism this harness exists to avoid.
+    editingRoot.hideResidualTextCursorViews()
     switch mode {
     case .coreAnimation:
       layer.layerForSnapshot.render(in: context)
@@ -262,4 +278,54 @@ extension CALayer {
     return false
   }
 }
+
+
+extension UIView {
+  /// Hides any text-cursor decoration left attached after `endEditing(true)`.
+  ///
+  /// The four decorations observed on iOS 18.0 are `UIStandardTextCursorView`,
+  /// `_UITextCursorTrailingGlowView`, `_UICursorAccessoryHostView` and
+  /// `_UICursorAccessoryView`. Matching the `Cursor`/`Caret` stem rather than those exact
+  /// names keeps a renamed or newly added decoration covered, since missing one is a
+  /// benign regression to the previous behaviour while hiding a real view silently drops
+  /// content from a baseline.
+  ///
+  /// That asymmetry is why ownership is established rather than inferred. A name says
+  /// nothing about who declared a class: a consumer is free to write `UICursorLegendView`,
+  /// and `UI` is a convention rather than a guarantee. `Bundle(for:)` answers the actual
+  /// question, since a consumer's class resolves to its own bundle however it is spelled.
+  /// Generic arguments are dropped first so a consumer type cannot supply the stem from
+  /// inside a UIKit wrapper such as `_UIHostingView<SomeCursorContent>`.
+  ///
+  /// The mutation is committed rather than left to the ambient implicit transaction:
+  /// `layerForSnapshot` renders `presentation()`, and an uncommitted model-layer change
+  /// is not in the presentation tree yet — so the caret would survive in exactly the
+  /// `.coreAnimation` and over-tall paths this is meant to fix. Committing a transaction
+  /// whose actions are disabled publishes the change without running unrelated work, so
+  /// it does not reintroduce the nondeterminism that rules out spinning the run loop.
+  func hideResidualTextCursorViews() {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    hideMatchingCursorViews()
+    CATransaction.commit()
+  }
+
+  private func hideMatchingCursorViews() {
+    if Self.isTextCursorDecoration(type(of: self)) {
+      isHidden = true
+    }
+    for subview in subviews {
+      subview.hideMatchingCursorViews()
+    }
+  }
+
+  private static func isTextCursorDecoration(_ viewType: UIView.Type) -> Bool {
+    guard Bundle(for: viewType) == uiKitBundle else { return false }
+    let baseName = String(describing: viewType).prefix { $0 != "<" }
+    return baseName.contains("Cursor") || baseName.contains("Caret")
+  }
+
+  private static let uiKitBundle = Bundle(for: UIView.self)
+}
+
 #endif
