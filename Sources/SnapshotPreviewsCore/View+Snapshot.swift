@@ -287,12 +287,15 @@ extension UIView {
   /// `_UITextCursorTrailingGlowView`, `_UICursorAccessoryHostView` and
   /// `_UICursorAccessoryView`. Matching the `Cursor`/`Caret` stem rather than those exact
   /// names keeps a renamed or newly added decoration covered, since missing one is a
-  /// benign regression to the previous behaviour.
+  /// benign regression to the previous behaviour while hiding a real view silently drops
+  /// content from a baseline.
   ///
-  /// The UIKit-prefix requirement is what keeps that breadth safe: hiding a real view
-  /// would silently drop content from a baseline, which is far worse than missing a
-  /// caret, and a consumer's own `MapCursorView` or `DisclosureCaretView` matches the
-  /// stem while carrying no `UI` prefix.
+  /// That asymmetry is why ownership is established rather than inferred. A name says
+  /// nothing about who declared a class: a consumer is free to write `UICursorLegendView`,
+  /// and `UI` is a convention rather than a guarantee. `Bundle(for:)` answers the actual
+  /// question, since a consumer's class resolves to its own bundle however it is spelled.
+  /// Generic arguments are dropped first so a consumer type cannot supply the stem from
+  /// inside a UIKit wrapper such as `_UIHostingView<SomeCursorContent>`.
   ///
   /// The mutation is committed rather than left to the ambient implicit transaction:
   /// `layerForSnapshot` renders `presentation()`, and an uncommitted model-layer change
@@ -308,20 +311,21 @@ extension UIView {
   }
 
   private func hideMatchingCursorViews() {
-    // Generic arguments are dropped before matching: `String(describing:)` spells a generic
-    // view as `_UIHostingView<SomeContent>`, so a consumer type named for a cursor would
-    // otherwise supply the stem while the UIKit wrapper supplies the prefix — hiding a whole
-    // hosting view of real content. The decorations below are plain ObjC classes, so their
-    // base name is the whole name.
-    let baseName = String(describing: type(of: self)).prefix { $0 != "<" }
-    let isUIKitInternal = baseName.hasPrefix("UI") || baseName.hasPrefix("_UI")
-    if isUIKitInternal, baseName.contains("Cursor") || baseName.contains("Caret") {
+    if Self.isTextCursorDecoration(type(of: self)) {
       isHidden = true
     }
     for subview in subviews {
       subview.hideMatchingCursorViews()
     }
   }
+
+  private static func isTextCursorDecoration(_ viewType: UIView.Type) -> Bool {
+    guard Bundle(for: viewType) == uiKitBundle else { return false }
+    let baseName = String(describing: viewType).prefix { $0 != "<" }
+    return baseName.contains("Cursor") || baseName.contains("Caret")
+  }
+
+  private static let uiKitBundle = Bundle(for: UIView.self)
 }
 
 #endif
