@@ -33,7 +33,8 @@ public class SwiftUIRenderingStrategy: RenderingStrategy {
     }
     let wrappedView = EmergeModifierView(wrapped: view)
     let renderer = ImageRenderer(content: wrappedView)
-    #if canImport(UIKit)
+    // watchOS imports UIKit but has no UIScreen, so it falls through to the default below.
+    #if canImport(UIKit) && !os(watchOS)
     let defaultScale = UIScreen.main.scale
     #elseif canImport(AppKit)
     let defaultScale = NSScreen.main?.backingScaleFactor ?? 1.0
