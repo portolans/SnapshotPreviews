@@ -70,4 +70,33 @@ struct FocusedUIKitFieldView_Previews: PreviewProvider {
   }
 }
 
+
+/// A focused field inside a view tall enough to take the Core Animation capture path.
+///
+/// `requiresCoreAnimationSnapshot` trips at twice the screen height, and that path renders
+/// `layer.presentation()` rather than drawing the hierarchy — so an uncommitted hide would
+/// still show a caret here even while the shorter fixtures above came out clean.
+struct TallFocusedFieldView: View {
+  @FocusState private var isFocused: Bool
+  @State private var text = ""
+
+  var body: some View {
+    VStack {
+      TextField("Placeholder", text: $text)
+        .textFieldStyle(.roundedBorder)
+        .focused($isFocused)
+      Spacer()
+    }
+    .padding()
+    .frame(height: 2000)
+    .onAppear { isFocused = true }
+  }
+}
+
+struct TallFocusedFieldView_Previews: PreviewProvider {
+  static var previews: some View {
+    TallFocusedFieldView()
+  }
+}
+
 #endif

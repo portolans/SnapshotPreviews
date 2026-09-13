@@ -283,21 +283,38 @@ extension CALayer {
 extension UIView {
   /// Hides any text-cursor decoration left attached after `endEditing(true)`.
   ///
-  /// Matches on class-name family rather than concrete private types so a renamed or
-  /// added decoration is still covered. Missing one is a benign regression to the
-  /// previous behaviour, whereas hiding a real view would be a visible bug.
-  ///
   /// The four decorations observed on iOS 18.0 are `UIStandardTextCursorView`,
   /// `_UITextCursorTrailingGlowView`, `_UICursorAccessoryHostView` and
-  /// `_UICursorAccessoryView` — note the visible one carries neither a `CursorView` nor
-  /// a `CursorAccessory` suffix, which is why this matches the bare `Cursor` stem.
+  /// `_UICursorAccessoryView`. Matching the `Cursor`/`Caret` stem rather than those exact
+  /// names keeps a renamed or newly added decoration covered, since missing one is a
+  /// benign regression to the previous behaviour.
+  ///
+  /// The UIKit-prefix requirement is what keeps that breadth safe: hiding a real view
+  /// would silently drop content from a baseline, which is far worse than missing a
+  /// caret, and a consumer's own `MapCursorView` or `DisclosureCaretView` matches the
+  /// stem while carrying no `UI` prefix.
+  ///
+  /// The mutation is committed rather than left to the ambient implicit transaction:
+  /// `layerForSnapshot` renders `presentation()`, and an uncommitted model-layer change
+  /// is not in the presentation tree yet — so the caret would survive in exactly the
+  /// `.coreAnimation` and over-tall paths this is meant to fix. Committing a transaction
+  /// whose actions are disabled publishes the change without running unrelated work, so
+  /// it does not reintroduce the nondeterminism that rules out spinning the run loop.
   func hideResidualTextCursorViews() {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    hideMatchingCursorViews()
+    CATransaction.commit()
+  }
+
+  private func hideMatchingCursorViews() {
     let name = String(describing: type(of: self))
-    if name.contains("Cursor") || name.contains("Caret") {
+    let isUIKitInternal = name.hasPrefix("UI") || name.hasPrefix("_UI")
+    if isUIKitInternal, name.contains("Cursor") || name.contains("Caret") {
       isHidden = true
     }
     for subview in subviews {
-      subview.hideResidualTextCursorViews()
+      subview.hideMatchingCursorViews()
     }
   }
 }
