@@ -308,9 +308,14 @@ extension UIView {
   }
 
   private func hideMatchingCursorViews() {
-    let name = String(describing: type(of: self))
-    let isUIKitInternal = name.hasPrefix("UI") || name.hasPrefix("_UI")
-    if isUIKitInternal, name.contains("Cursor") || name.contains("Caret") {
+    // Generic arguments are dropped before matching: `String(describing:)` spells a generic
+    // view as `_UIHostingView<SomeContent>`, so a consumer type named for a cursor would
+    // otherwise supply the stem while the UIKit wrapper supplies the prefix — hiding a whole
+    // hosting view of real content. The decorations below are plain ObjC classes, so their
+    // base name is the whole name.
+    let baseName = String(describing: type(of: self)).prefix { $0 != "<" }
+    let isUIKitInternal = baseName.hasPrefix("UI") || baseName.hasPrefix("_UI")
+    if isUIKitInternal, baseName.contains("Cursor") || baseName.contains("Caret") {
       isHidden = true
     }
     for subview in subviews {
