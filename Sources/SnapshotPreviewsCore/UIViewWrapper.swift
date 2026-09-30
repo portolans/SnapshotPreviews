@@ -39,5 +39,17 @@ struct UIViewWrapper: UIViewRepresentable {
   }
 
   func updateUIView(_ uiView: UIView, context: Context) { }
+
+  // Frame-laid-out views measure themselves in sizeThatFits and have no intrinsicContentSize,
+  // so without this they stretch to fill the device instead of rendering at their own size.
+  func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+    let fittingSize = uiView.sizeThatFits(CGSize(
+      width: proposal.width ?? .greatestFiniteMagnitude,
+      height: proposal.height ?? .greatestFiniteMagnitude
+    ))
+    // UIView's default sizeThatFits returns bounds.size, which is zero for a view that doesn't
+    // measure itself; keep SwiftUI's default sizing for those.
+    return fittingSize == .zero ? nil : fittingSize
+  }
 }
 #endif
