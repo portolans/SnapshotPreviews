@@ -42,6 +42,7 @@ struct UIViewWrapper: UIViewRepresentable {
 
   // Frame-laid-out views measure themselves in sizeThatFits and have no intrinsicContentSize,
   // so without this they stretch to fill the device instead of rendering at their own size.
+  @available(iOS 16.0, tvOS 16.0, *)
   func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
     let fittingSize = uiView.sizeThatFits(CGSize(
       width: proposal.width ?? .greatestFiniteMagnitude,
