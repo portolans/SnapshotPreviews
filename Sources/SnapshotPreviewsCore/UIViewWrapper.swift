@@ -44,9 +44,11 @@ struct UIViewWrapper: UIViewRepresentable {
   // so without this they stretch to fill the device instead of rendering at their own size.
   @available(iOS 16.0, tvOS 16.0, *)
   func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+    // The host measures intrinsic size with unspecified dimensions; resolving those to zero
+    // rather than infinity keeps a view that fills its proposal from measuring as unbounded.
     let fittingSize = uiView.sizeThatFits(CGSize(
-      width: proposal.width ?? .greatestFiniteMagnitude,
-      height: proposal.height ?? .greatestFiniteMagnitude
+      width: proposal.width ?? 0,
+      height: proposal.height ?? 0
     ))
     // UIView's default sizeThatFits returns bounds.size, which is zero for a view that doesn't
     // measure itself; keep SwiftUI's default sizing for those.
